@@ -1,0 +1,17 @@
+# Target areas for Woningzoeker
+# Den Haag (0518), Leidschendam-Voorburg (1916), Rijswijk (0603)
+
+municipalities:
+  - code: "0518"
+    name: Den Haag
+    funda_slug: den-haag
+  - code: "1916"
+    name: Leidschendam-Voorburg
+    funda_slug: leidschendam-voorburg
+  - code: "0603"
+    name: Rijswijk
+    funda_slug: rijswijk
+
+# Specific neighborhoods of interest (optional)
+# Add neighborhoods here to focus scoring on specific areas
+areas: []
