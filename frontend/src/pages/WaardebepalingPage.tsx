@@ -81,21 +81,40 @@ function EnergyLabelBadge({ label }: { label: string }) {
   )
 }
 
-function WOZCard({ wozWaarde, peiljaar }: { wozWaarde?: number; peiljaar?: number }) {
-  if (!wozWaarde) return null
+function WOZCard({
+  wozWaarde,
+  peiljaar,
+  grondoppervlakte,
+}: {
+  wozWaarde?: number
+  peiljaar?: number
+  grondoppervlakte?: number
+}) {
+  if (!wozWaarde && !grondoppervlakte) return null
 
   return (
     <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
       <div className="flex items-center justify-between">
         <div>
-          <div className="text-sm text-blue-600 font-medium">WOZ-waarde</div>
-          <div className="text-lg font-semibold text-blue-800">{formatPrijs(wozWaarde)}</div>
+          {wozWaarde && (
+            <>
+              <div className="text-sm text-blue-600 font-medium">WOZ-waarde</div>
+              <div className="text-lg font-semibold text-blue-800">{formatPrijs(wozWaarde)}</div>
+            </>
+          )}
         </div>
-        {peiljaar && (
-          <div className="text-sm text-blue-500">
-            Peildatum: 1 jan {peiljaar}
-          </div>
-        )}
+        <div className="text-right">
+          {peiljaar && (
+            <div className="text-sm text-blue-500">
+              Peildatum: 1 jan {peiljaar}
+            </div>
+          )}
+          {grondoppervlakte && (
+            <div className="text-sm text-blue-600 mt-1">
+              Perceel: <span className="font-medium">{grondoppervlakte} m²</span>
+            </div>
+          )}
+        </div>
       </div>
       <p className="text-xs text-blue-600 mt-2">
         De WOZ-waarde is de waarde voor belastingdoeleinden, bepaald door de gemeente.
@@ -506,7 +525,11 @@ export default function WaardebepalingPage() {
               </div>
 
               {/* WOZ value */}
-              <WOZCard wozWaarde={addressResult.woz_waarde} peiljaar={addressResult.woz_peiljaar} />
+              <WOZCard
+                wozWaarde={addressResult.woz_waarde}
+                peiljaar={addressResult.woz_peiljaar}
+                grondoppervlakte={addressResult.grondoppervlakte}
+              />
 
               {/* Comparables summary */}
               <ComparablesCard
@@ -621,6 +644,19 @@ export default function WaardebepalingPage() {
                       {formatPrijs(addressResult.woningtype_correctie)}
                     </span>
                   </div>
+                  {addressResult.perceel_correctie !== 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Perceelgrootte correctie</span>
+                      <span
+                        className={
+                          addressResult.perceel_correctie >= 0 ? 'text-green-600' : 'text-red-600'
+                        }
+                      >
+                        {addressResult.perceel_correctie >= 0 ? '+' : ''}
+                        {formatPrijs(addressResult.perceel_correctie)}
+                      </span>
+                    </div>
+                  )}
                   <div className="flex justify-between">
                     <span className="text-gray-600">Marktcorrectie (overbieden)</span>
                     <span className="text-green-600">

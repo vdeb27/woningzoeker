@@ -42,6 +42,7 @@ class ValuationResult:
     energielabel_correctie: int
     bouwjaar_correctie: int
     woningtype_correctie: int
+    perceel_correctie: int  # Plot size correction
     markt_correctie: int
 
     # Confidence
@@ -99,6 +100,18 @@ class ValuationService:
         "vrijstaand": 0.10,
         "villa": 0.15,
     }
+
+    # Reference plot sizes per property type (in m²)
+    # Used to calculate plot size correction
+    REFERENCE_PLOT_SIZES = {
+        "appartement": 0,  # Apartments typically don't have plots
+        "tussenwoning": 150,
+        "hoekwoning": 200,
+        "twee-onder-een-kap": 300,
+        "vrijstaand": 500,
+        "villa": 800,
+    }
+    DEFAULT_REFERENCE_PLOT_SIZE = 150  # Default for unknown types
 
     # Default market overbidding percentage (can be updated from market data)
     DEFAULT_OVERBID_PERCENTAGE = 0.05  # 5% overbidding
@@ -229,6 +242,46 @@ class ValuationService:
                 return correction
         return 0.0
 
+    def get_perceel_correction(
+        self,
+        grondoppervlakte: Optional[int],
+        woningtype: Optional[str] = None,
+    ) -> float:
+        """
+        Get plot size correction factor.
+
+        Compares actual plot size with reference for the property type.
+        Returns correction: +5% per 50m² above reference, max +15%.
+        Negative correction for smaller plots: -3% per 50m² below reference.
+        """
+        if not grondoppervlakte or grondoppervlakte <= 0:
+            return 0.0
+
+        # Get reference plot size for this property type
+        reference = self.DEFAULT_REFERENCE_PLOT_SIZE
+        if woningtype:
+            normalized = woningtype.lower().strip()
+            for key, ref_size in self.REFERENCE_PLOT_SIZES.items():
+                if key in normalized:
+                    reference = ref_size
+                    break
+
+        # Apartments don't get plot correction
+        if reference == 0:
+            return 0.0
+
+        # Calculate difference from reference
+        difference = grondoppervlakte - reference
+
+        if difference > 0:
+            # Larger plot: +5% per 50m² above reference, max +15%
+            correction = (difference / 50) * 0.05
+            return min(correction, 0.15)
+        else:
+            # Smaller plot: -3% per 50m² below reference, max -10%
+            correction = (difference / 50) * 0.03
+            return max(correction, -0.10)
+
     def estimate_value(
         self,
         woonoppervlakte: int,
@@ -239,6 +292,7 @@ class ValuationService:
         woningtype: Optional[str] = None,
         vraagprijs: Optional[int] = None,
         comparables: Optional[List[Dict[str, Any]]] = None,
+        grondoppervlakte: Optional[int] = None,
     ) -> ValuationResult:
         """
         Estimate the market value of a property.
@@ -303,6 +357,9 @@ class ValuationService:
         type_factor = self.get_type_correction(woningtype)
         type_correctie = int(basis_waarde * type_factor)
 
+        perceel_factor = self.get_perceel_correction(grondoppervlakte, woningtype)
+        perceel_correctie = int(basis_waarde * perceel_factor)
+
         market_correctie = int(basis_waarde * self._market_overbid)
 
         # Calculate estimated value
@@ -311,6 +368,7 @@ class ValuationService:
             + energy_correctie
             + year_correctie
             + type_correctie
+            + perceel_correctie
             + market_correctie
         )
 
@@ -359,6 +417,7 @@ class ValuationService:
             energielabel_correctie=energy_correctie,
             bouwjaar_correctie=year_correctie,
             woningtype_correctie=type_correctie,
+            perceel_correctie=perceel_correctie,
             markt_correctie=market_correctie,
             confidence=confidence,
             confidence_factors=confidence_factors,
