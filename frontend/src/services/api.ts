@@ -22,6 +22,7 @@ export interface WaardebepalingResponse {
   energielabel_correctie: number
   bouwjaar_correctie: number
   woningtype_correctie: number
+  perceel_correctie: number
   markt_correctie: number
   confidence: number
   confidence_factors: Record<string, unknown>
@@ -100,6 +101,7 @@ export interface EnhancedWaardebepalingResponse {
   // WOZ
   woz_waarde?: number
   woz_peiljaar?: number
+  grondoppervlakte?: number
   // Energielabel (auto-fetched)
   energielabel?: string
   energielabel_bron: string
@@ -118,6 +120,7 @@ export interface EnhancedWaardebepalingResponse {
   energielabel_correctie: number
   bouwjaar_correctie: number
   woningtype_correctie: number
+  perceel_correctie: number
   markt_correctie: number
   confidence: number
   confidence_factors: Record<string, unknown>

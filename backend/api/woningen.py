@@ -92,6 +92,7 @@ class WaardebepalingResponse(BaseModel):
     energielabel_correctie: int
     bouwjaar_correctie: int
     woningtype_correctie: int
+    perceel_correctie: int = 0
     markt_correctie: int
 
     confidence: float
@@ -183,6 +184,7 @@ class EnhancedWaardebepalingResponse(BaseModel):
     # WOZ data
     woz_waarde: Optional[int] = None
     woz_peiljaar: Optional[int] = None
+    grondoppervlakte: Optional[int] = None
 
     # Energielabel (auto-fetched)
     energielabel: Optional[str] = None
@@ -205,6 +207,7 @@ class EnhancedWaardebepalingResponse(BaseModel):
     energielabel_correctie: int
     bouwjaar_correctie: int
     woningtype_correctie: int
+    perceel_correctie: int = 0
     markt_correctie: int
 
     confidence: float
@@ -301,6 +304,7 @@ def get_woning_waarde(woning_id: int, db: Session = Depends(get_db)):
         energielabel_correctie=result.energielabel_correctie,
         bouwjaar_correctie=result.bouwjaar_correctie,
         woningtype_correctie=result.woningtype_correctie,
+        perceel_correctie=result.perceel_correctie,
         markt_correctie=result.markt_correctie,
         confidence=result.confidence,
         confidence_factors=result.confidence_factors,
@@ -333,6 +337,7 @@ def bereken_waarde(request: WaardebepalingRequest, db: Session = Depends(get_db)
         energielabel_correctie=result.energielabel_correctie,
         bouwjaar_correctie=result.bouwjaar_correctie,
         woningtype_correctie=result.woningtype_correctie,
+        perceel_correctie=result.perceel_correctie,
         markt_correctie=result.markt_correctie,
         confidence=result.confidence,
         confidence_factors=result.confidence_factors,
@@ -636,6 +641,9 @@ def bereken_waarde_voor_adres(
     # Get energielabel for valuation
     energielabel = energielabel_result.energielabel if energielabel_result else None
 
+    # Get grondoppervlakte from WOZ
+    grondoppervlakte = woz_result.oppervlakte if woz_result else None
+
     # Calculate valuation
     service = ValuationService(db)
     valuation = service.estimate_value(
@@ -644,6 +652,7 @@ def bereken_waarde_voor_adres(
         bouwjaar=bouwjaar,
         woningtype=request.woningtype,
         vraagprijs=request.vraagprijs,
+        grondoppervlakte=grondoppervlakte,
     )
 
     # Build address string - prefer BAG data (most reliable)
@@ -687,6 +696,7 @@ def bereken_waarde_voor_adres(
         # WOZ
         woz_waarde=woz_result.woz_waarde if woz_result else None,
         woz_peiljaar=woz_result.peiljaar if woz_result else None,
+        grondoppervlakte=grondoppervlakte,
         # Energielabel
         energielabel=energielabel,
         energielabel_bron="auto" if energielabel else "niet_gevonden",
@@ -705,6 +715,7 @@ def bereken_waarde_voor_adres(
         energielabel_correctie=valuation.energielabel_correctie,
         bouwjaar_correctie=valuation.bouwjaar_correctie,
         woningtype_correctie=valuation.woningtype_correctie,
+        perceel_correctie=valuation.perceel_correctie,
         markt_correctie=valuation.markt_correctie,
         confidence=valuation.confidence,
         confidence_factors=valuation.confidence_factors,
