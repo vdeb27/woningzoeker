@@ -2,6 +2,17 @@
 
 from collectors.bag_collector import BagClient, BagRateLimitError
 from collectors.cbs_collector import download_cbs_dataset, filter_for_region
+from collectors.cbs_market_collector import (
+    CBSMarketCollector,
+    MarketDataResult,
+    create_cbs_market_collector,
+)
+from collectors.cbs_buurt_collector import (
+    CBSBuurtCollector,
+    BuurtData,
+    create_cbs_buurt_collector,
+    lookup_buurt_code_pdok,
+)
 from collectors.woz_collector import WOZCollector, WOZResult, create_woz_collector
 from collectors.energielabel_collector import (
     EnergielabelCollector,
@@ -22,6 +33,15 @@ __all__ = [
     # CBS
     "download_cbs_dataset",
     "filter_for_region",
+    # CBS Market Data
+    "CBSMarketCollector",
+    "MarketDataResult",
+    "create_cbs_market_collector",
+    # CBS Buurt Data
+    "CBSBuurtCollector",
+    "BuurtData",
+    "create_cbs_buurt_collector",
+    "lookup_buurt_code_pdok",
     # WOZ
     "WOZCollector",
     "WOZResult",

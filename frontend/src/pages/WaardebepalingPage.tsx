@@ -152,6 +152,126 @@ function ComparablesCard({
   )
 }
 
+function MarktIndicatorenCard({
+  gemPrijs,
+  overbiedPct,
+  verkooptijd,
+  peildatum,
+}: {
+  gemPrijs?: number
+  overbiedPct?: number
+  verkooptijd?: number
+  peildatum?: string
+}) {
+  if (!gemPrijs && !overbiedPct && !verkooptijd) return null
+
+  return (
+    <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-sm text-amber-700 font-medium">Marktindicatoren regio</div>
+        {peildatum && (
+          <div className="text-xs text-amber-500">{peildatum}</div>
+        )}
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        {gemPrijs && (
+          <div>
+            <div className="text-xs text-amber-600">Gem. verkoopprijs</div>
+            <div className="text-sm font-semibold text-amber-800">{formatPrijs(gemPrijs)}</div>
+          </div>
+        )}
+        {overbiedPct !== undefined && overbiedPct !== null && (
+          <div>
+            <div className="text-xs text-amber-600">Overbieden</div>
+            <div className={`text-sm font-semibold ${overbiedPct >= 0 ? 'text-red-600' : 'text-green-600'}`}>
+              {overbiedPct >= 0 ? '+' : ''}{overbiedPct.toFixed(1)}%
+            </div>
+          </div>
+        )}
+        {verkooptijd && (
+          <div>
+            <div className="text-xs text-amber-600">Gem. verkooptijd</div>
+            <div className="text-sm font-semibold text-amber-800">{verkooptijd} dagen</div>
+          </div>
+        )}
+      </div>
+      <p className="text-xs text-amber-600 mt-2">
+        Bron: CBS StatLine
+      </p>
+    </div>
+  )
+}
+
+function BuurtCard({
+  buurtNaam,
+  gemWoz,
+  koopwoningenPct,
+  gemInkomen,
+}: {
+  buurtNaam?: string
+  gemWoz?: number
+  koopwoningenPct?: number
+  gemInkomen?: number
+}) {
+  if (!buurtNaam && !gemWoz) return null
+
+  return (
+    <div className="bg-teal-50 border border-teal-200 rounded-lg p-4">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-sm text-teal-700 font-medium">Buurtindicatoren</div>
+        {buurtNaam && (
+          <div className="text-xs text-teal-600 truncate max-w-[180px]" title={buurtNaam}>
+            {buurtNaam}
+          </div>
+        )}
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        {gemWoz && (
+          <div>
+            <div className="text-xs text-teal-600">Gem. WOZ buurt</div>
+            <div className="text-sm font-semibold text-teal-800">{formatPrijs(gemWoz)}</div>
+          </div>
+        )}
+        {koopwoningenPct !== undefined && koopwoningenPct !== null && (
+          <div>
+            <div className="text-xs text-teal-600">Koopwoningen</div>
+            <div className="text-sm font-semibold text-teal-800">{koopwoningenPct.toFixed(0)}%</div>
+          </div>
+        )}
+        {gemInkomen && (
+          <div>
+            <div className="text-xs text-teal-600">Gem. inkomen</div>
+            <div className="text-sm font-semibold text-teal-800">{formatPrijs(gemInkomen)}</div>
+          </div>
+        )}
+      </div>
+      <p className="text-xs text-teal-600 mt-2">
+        Bron: CBS Kerncijfers wijken en buurten
+      </p>
+    </div>
+  )
+}
+
+function DataBronnenFooter({ bronnen }: { bronnen: string[] }) {
+  if (!bronnen || bronnen.length === 0) return null
+
+  return (
+    <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mt-4">
+      <div className="text-xs text-gray-500 font-medium mb-2">Gebruikte databronnen</div>
+      <div className="flex flex-wrap gap-2">
+        {bronnen.map((bron, index) => (
+          <span
+            key={index}
+            className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-gray-200 text-gray-700"
+          >
+            {bron}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 type Mode = 'simple' | 'address'
 
 export default function WaardebepalingPage() {
@@ -537,6 +657,22 @@ export default function WaardebepalingPage() {
                 avgM2={addressResult.comparables_avg_m2}
               />
 
+              {/* Market indicators */}
+              <MarktIndicatorenCard
+                gemPrijs={addressResult.markt_gem_prijs}
+                overbiedPct={addressResult.markt_overbiedpct}
+                verkooptijd={addressResult.markt_verkooptijd}
+                peildatum={addressResult.markt_peildatum}
+              />
+
+              {/* Buurt indicators */}
+              <BuurtCard
+                buurtNaam={addressResult.buurt_naam}
+                gemWoz={addressResult.buurt_gem_woz}
+                koopwoningenPct={addressResult.buurt_koopwoningen_pct}
+                gemInkomen={addressResult.buurt_gem_inkomen}
+              />
+
               {/* Main result */}
               <div className="bg-white rounded-lg shadow p-6">
                 <h2 className="text-lg font-semibold mb-4">Geschatte waarde</h2>
@@ -669,6 +805,9 @@ export default function WaardebepalingPage() {
                   </div>
                 </div>
               </div>
+
+              {/* Data sources footer */}
+              <DataBronnenFooter bronnen={addressResult.data_bronnen} />
             </div>
           )}
 
