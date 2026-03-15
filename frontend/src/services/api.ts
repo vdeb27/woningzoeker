@@ -127,6 +127,19 @@ export interface EnhancedWaardebepalingResponse {
   // Comparables
   comparables_count: number
   comparables_avg_m2?: number
+  // Market data (CBS StatLine)
+  markt_gem_prijs?: number
+  markt_overbiedpct?: number
+  markt_verkooptijd?: number
+  markt_peildatum?: string
+  // Buurt data (CBS Kerncijfers)
+  buurt_code?: string
+  buurt_naam?: string
+  buurt_gem_woz?: number
+  buurt_koopwoningen_pct?: number
+  buurt_gem_inkomen?: number
+  // Data sources
+  data_bronnen: string[]
 }
 
 export interface Woning {

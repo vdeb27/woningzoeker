@@ -11,6 +11,8 @@ from services import ValuationService
 from collectors.woz_collector import create_woz_collector
 from collectors.energielabel_collector import create_energielabel_collector
 from collectors.kadaster_collector import create_kadaster_collector
+from collectors.cbs_market_collector import create_cbs_market_collector
+from collectors.cbs_buurt_collector import create_cbs_buurt_collector, lookup_buurt_code_pdok
 from collectors.bag_collector import BagClient
 import os
 
@@ -216,6 +218,22 @@ class EnhancedWaardebepalingResponse(BaseModel):
     # Comparables summary
     comparables_count: int = 0
     comparables_avg_m2: Optional[float] = None
+
+    # Market data (CBS StatLine)
+    markt_gem_prijs: Optional[int] = None  # Regional average price
+    markt_overbiedpct: Optional[float] = None  # Current overbidding %
+    markt_verkooptijd: Optional[int] = None  # Average days to sell
+    markt_peildatum: Optional[str] = None  # Market data reference date
+
+    # Buurt data (CBS Kerncijfers)
+    buurt_code: Optional[str] = None
+    buurt_naam: Optional[str] = None
+    buurt_gem_woz: Optional[int] = None  # Average WOZ in neighborhood
+    buurt_koopwoningen_pct: Optional[float] = None  # % owner-occupied
+    buurt_gem_inkomen: Optional[int] = None  # Average income
+
+    # Data sources used
+    data_bronnen: List[str] = []
 
 
 @router.get("/", response_model=List[WoningSummary])
@@ -644,8 +662,45 @@ def bereken_waarde_voor_adres(
     # Get grondoppervlakte from WOZ
     grondoppervlakte = woz_result.oppervlakte if woz_result else None
 
+    # Fetch CBS market data for dynamic overbid percentage
+    cbs_market_data = None
+    market_overbid_pct = None
+    try:
+        cbs_collector = create_cbs_market_collector()
+        # Determine gemeente from address sources
+        gemeente_naam = None
+        if bag_data and bag_data.get("woonplaats_naam"):
+            gemeente_naam = bag_data.get("woonplaats_naam")
+        elif woz_result and woz_result.woonplaats:
+            gemeente_naam = woz_result.woonplaats
+
+        if gemeente_naam:
+            cbs_market_data = cbs_collector.get_market_data(gemeente_naam)
+            if cbs_market_data.overbiedingspercentage is not None:
+                # CBS provides as percentage, convert to decimal
+                market_overbid_pct = cbs_market_data.overbiedingspercentage / 100.0
+    except Exception:
+        pass
+
+    # Fetch CBS buurt data for neighborhood-level indicators
+    buurt_data = None
+    buurt_code = None
+    try:
+        # Look up buurt code via PDOK
+        buurt_code = lookup_buurt_code_pdok(request.postcode, request.huisnummer)
+        if buurt_code:
+            buurt_collector = create_cbs_buurt_collector()
+            buurt_data = buurt_collector.get_buurt(buurt_code)
+    except Exception:
+        pass
+
     # Calculate valuation
     service = ValuationService(db)
+
+    # Use dynamic market overbid from CBS if available
+    if market_overbid_pct is not None:
+        service.set_market_overbid(market_overbid_pct)
+
     valuation = service.estimate_value(
         woonoppervlakte=woonoppervlakte,
         energielabel=energielabel,
@@ -689,6 +744,22 @@ def bereken_waarde_voor_adres(
         if request.toevoeging:
             adres += f" {request.toevoeging}"
 
+    # Build list of data sources used
+    data_bronnen = []
+    if bag_data and bag_data.get("nummeraanduiding_id"):
+        data_bronnen.append("BAG (Kadaster)")
+    if woz_result and woz_result.woz_waarde:
+        data_bronnen.append("WOZ Waardeloket")
+    if energielabel:
+        data_bronnen.append("EP-Online (RVO)")
+    if comparables_result and comparables_result.count > 0:
+        data_bronnen.append("Kadaster Transacties")
+    if cbs_market_data and (cbs_market_data.gemiddelde_prijs or cbs_market_data.overbiedingspercentage):
+        data_bronnen.append("CBS StatLine")
+    if buurt_data and buurt_data.gem_woz_waarde:
+        if "CBS Kerncijfers" not in data_bronnen:
+            data_bronnen.append("CBS Kerncijfers")
+
     return EnhancedWaardebepalingResponse(
         postcode=request.postcode,
         huisnummer=request.huisnummer,
@@ -722,6 +793,19 @@ def bereken_waarde_voor_adres(
         # Comparables
         comparables_count=comparables_result.count if comparables_result else 0,
         comparables_avg_m2=comparables_result.avg_prijs_per_m2 if comparables_result else None,
+        # Market data (CBS StatLine)
+        markt_gem_prijs=cbs_market_data.gemiddelde_prijs if cbs_market_data else None,
+        markt_overbiedpct=cbs_market_data.overbiedingspercentage if cbs_market_data else None,
+        markt_verkooptijd=cbs_market_data.gemiddelde_verkooptijd if cbs_market_data else None,
+        markt_peildatum=cbs_market_data.peildatum if cbs_market_data else None,
+        # Buurt data (CBS Kerncijfers)
+        buurt_code=buurt_code,
+        buurt_naam=buurt_data.buurt_naam if buurt_data else None,
+        buurt_gem_woz=buurt_data.gem_woz_waarde if buurt_data else None,
+        buurt_koopwoningen_pct=buurt_data.koopwoningen_pct if buurt_data else None,
+        buurt_gem_inkomen=buurt_data.gem_inkomen if buurt_data else None,
+        # Data sources
+        data_bronnen=data_bronnen,
     )
 
 
