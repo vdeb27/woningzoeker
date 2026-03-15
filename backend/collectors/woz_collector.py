@@ -8,6 +8,7 @@ WOZ values are updated annually (reference date January 1st).
 from __future__ import annotations
 
 import json
+import logging
 import random
 import re
 import time
@@ -17,6 +18,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 
 USER_AGENTS = [
@@ -118,11 +121,9 @@ class WOZCollector:
     session: Optional[requests.Session] = None
     _last_request: float = field(default=0.0, init=False, repr=False)
 
-    # WOZ Waardeloket uses a different approach - it's actually an API
-    # The actual data comes from the PDOK/Kadaster LVWOZ service
-    BASE_URL = "https://www.wozwaardeloket.nl"
-    API_URL = "https://api.pdok.nl/bzk/locatieserver/search/v3_1/free"
-    WOZ_API_URL = "https://www.wozwaardeloket.nl/woz-proxy/wozloket"
+    # PDOK for address lookup, Kadaster LV-WOZ for WOZ values
+    PDOK_API_URL = "https://api.pdok.nl/bzk/locatieserver/search/v3_1/free"
+    WOZ_API_URL = "https://api.kadaster.nl/lvwoz/wozwaardeloket-api/v1/wozwaarde/nummeraanduiding"
 
     def __post_init__(self) -> None:
         if self.session is None:
@@ -136,9 +137,6 @@ class WOZCollector:
             "User-Agent": random.choice(USER_AGENTS),
             "Accept": "application/json, text/plain, */*",
             "Accept-Language": "nl-NL,nl;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Origin": self.BASE_URL,
-            "Referer": f"{self.BASE_URL}/",
         }
 
     def _rate_limit(self) -> None:
@@ -246,8 +244,9 @@ class WOZCollector:
 
         try:
             self._rate_limit()
+            logger.info(f"Looking up address ID for: {query}")
             response = self.session.get(
-                self.API_URL,
+                self.PDOK_API_URL,
                 params=params,
                 headers=self._get_headers(),
                 timeout=30,
@@ -257,10 +256,14 @@ class WOZCollector:
 
             docs = data.get("response", {}).get("docs", [])
             if docs:
-                return docs[0].get("nummeraanduiding_id")
+                num_id = docs[0].get("nummeraanduiding_id")
+                logger.info(f"Found nummeraanduiding_id: {num_id}")
+                return num_id
+            else:
+                logger.warning(f"No address found for query: {query}")
 
-        except requests.RequestException:
-            pass
+        except requests.RequestException as e:
+            logger.error(f"Error looking up address: {e}")
 
         return None
 
@@ -268,48 +271,30 @@ class WOZCollector:
         """
         Fetch WOZ value for a nummeraanduiding ID.
 
-        Uses the WOZ Waardeloket proxy API.
+        Uses the Kadaster LV-WOZ API (same as WOZ Waardeloket website).
         """
-        # The WOZ Waardeloket uses GraphQL-like queries
-        # We need to find the WOZ object first
         try:
             self._rate_limit()
 
-            # Search for WOZ objects linked to this address
-            search_url = f"{self.WOZ_API_URL}/search"
-            search_params = {
-                "nummeraanduidingId": nummeraanduiding_id,
-            }
+            url = f"{self.WOZ_API_URL}/{nummeraanduiding_id}"
+            logger.info(f"Fetching WOZ from Kadaster: {url}")
 
             response = self.session.get(
-                search_url,
-                params=search_params,
+                url,
                 headers=self._get_headers(),
                 timeout=30,
             )
+            logger.info(f"WOZ response status: {response.status_code}")
 
             if response.status_code == 200:
-                return response.json()
+                data = response.json()
+                logger.info(f"WOZ data received for {nummeraanduiding_id}")
+                return data
+            else:
+                logger.warning(f"WOZ response error: {response.status_code} - {response.text[:200]}")
 
-            # Alternative: try direct WOZ object lookup
-            # WOZ Waardeloket changed their API, try the newer endpoint
-            alt_url = f"https://www.wozwaardeloket.nl/api/woz/v1/wozobject"
-            alt_params = {
-                "nummeraanduidingIdentificatie": nummeraanduiding_id,
-            }
-
-            response = self.session.get(
-                alt_url,
-                params=alt_params,
-                headers=self._get_headers(),
-                timeout=30,
-            )
-
-            if response.status_code == 200:
-                return response.json()
-
-        except requests.RequestException:
-            pass
+        except requests.RequestException as e:
+            logger.error(f"Error fetching WOZ value: {e}")
 
         return None
 
@@ -373,58 +358,40 @@ class WOZCollector:
             result.error = "WOZ waarde niet beschikbaar"
             return result
 
-        # Parse WOZ response - structure depends on API version
+        # Parse Kadaster LV-WOZ API response
         try:
-            # Try different response formats
-            if isinstance(woz_data, list) and len(woz_data) > 0:
-                woz_obj = woz_data[0]
-            elif isinstance(woz_data, dict):
-                if "_embedded" in woz_data:
-                    objects = woz_data["_embedded"].get("wozObjecten", [])
-                    woz_obj = objects[0] if objects else woz_data
-                else:
-                    woz_obj = woz_data
-            else:
-                woz_obj = woz_data
+            woz_obj = woz_data.get("wozObject", {})
+            woz_waarden = woz_data.get("wozWaarden", [])
 
-            # Extract WOZ value and metadata
-            # Handle different possible field names
-            woz_waarde = (
-                woz_obj.get("vastgesteldeWaarde") or
-                woz_obj.get("wozWaarde") or
-                woz_obj.get("waarde") or
-                woz_obj.get("value")
-            )
+            # Get most recent WOZ value (first in list, sorted by peildatum desc)
+            if woz_waarden:
+                # Sort by peildatum descending to get most recent
+                sorted_waarden = sorted(woz_waarden, key=lambda x: x.get("peildatum", ""), reverse=True)
+                meest_recent = sorted_waarden[0]
 
-            if isinstance(woz_waarde, dict):
-                woz_waarde = woz_waarde.get("waarde") or woz_waarde.get("vastgesteldeWaarde")
+                result.woz_waarde = int(meest_recent.get("vastgesteldeWaarde", 0))
+                result.peildatum = meest_recent.get("peildatum")
+                if result.peildatum:
+                    year_match = re.search(r"(\d{4})", result.peildatum)
+                    if year_match:
+                        result.peiljaar = int(year_match.group(1))
 
-            if woz_waarde:
-                result.woz_waarde = int(woz_waarde)
+            # Address info from wozObject
+            straat = woz_obj.get("straatnaam") or woz_obj.get("openbareruimtenaam")
+            huisnr = woz_obj.get("huisnummer", "")
+            huisletter = woz_obj.get("huisletter") or ""
+            toevoeging = woz_obj.get("huisnummertoevoeging") or ""
 
-            # Peildatum (valuation date)
-            peildatum = (
-                woz_obj.get("waardepeildatum") or
-                woz_obj.get("peildatum") or
-                woz_obj.get("valuationDate")
-            )
-            if peildatum:
-                result.peildatum = peildatum
-                # Extract year
-                year_match = re.search(r"(\d{4})", str(peildatum))
-                if year_match:
-                    result.peiljaar = int(year_match.group(1))
+            if straat:
+                result.adres = f"{straat} {huisnr}{huisletter}{toevoeging}".strip()
 
-            # Address info
-            result.adres = woz_obj.get("adres") or woz_obj.get("locatie")
-            result.woonplaats = woz_obj.get("woonplaats") or woz_obj.get("plaatsnaam")
-            result.object_type = woz_obj.get("objectType") or woz_obj.get("type")
+            result.woonplaats = woz_obj.get("woonplaatsnaam")
+            result.oppervlakte = woz_obj.get("grondoppervlakte")
 
-            oppervlakte = woz_obj.get("oppervlakte") or woz_obj.get("gebruiksoppervlakte")
-            if oppervlakte:
-                result.oppervlakte = int(oppervlakte)
+            logger.info(f"Parsed WOZ: €{result.woz_waarde} (peildatum {result.peildatum})")
 
         except (KeyError, ValueError, IndexError, TypeError) as e:
+            logger.error(f"Error parsing WOZ data: {e}")
             result.error = f"Fout bij verwerken WOZ data: {str(e)}"
 
         # Cache result (even errors, to prevent repeated failed lookups)
