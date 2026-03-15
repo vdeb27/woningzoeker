@@ -1,0 +1,109 @@
+# Scoring configuration for neighborhood analysis
+# Each indicator has a weight (should sum to ~1.0) and direction
+
+# CBS dataset identifiers
+datasets:
+  kerncijfers: "85618NED"  # Kerncijfers wijken en buurten 2024
+  solar: "86044NED"        # Zonnestroom
+  labour: "86089NED"       # Arbeidsdeelname
+
+# Scoring indicators
+indicators:
+  income_per_inhabitant:
+    column: GemiddeldInkomenPerInwoner_81
+    higher_is_better: true
+    weight: 0.12
+    description: Gemiddeld inkomen per inwoner (koopkracht)
+
+  woz_value:
+    column: GemiddeldeWOZWaardeVanWoningen_36
+    higher_is_better: false
+    weight: 0.08
+    description: Gemiddelde WOZ-waarde als proxy voor woningkwaliteit
+
+  gas_consumption:
+    column: GemiddeldAardgasverbruikTotaal_56
+    higher_is_better: false
+    weight: 0.08
+    description: Lager gasverbruik duidt op energiezuinigere woningen
+
+  electricity_consumption:
+    column: GemiddeldeElektriciteitsleveringTotaal_48
+    higher_is_better: false
+    weight: 0.04
+    description: Lager elektriciteitsverbruik per woning
+
+  cars_per_household:
+    numerator: PersonenautoSTotaal_109
+    denominator: HuishoudensTotaal_29
+    higher_is_better: false
+    weight: 0.05
+    description: Minder auto's per huishouden duidt op betere OV/bereikbaarheid
+
+  labour_participation:
+    column: NettoArbeidsparticipatie_3
+    higher_is_better: true
+    weight: 0.10
+    description: Hogere arbeidsparticipatie wijst op economisch actieve bevolking
+
+  adult_poverty_rate:
+    column: PersonenArmRelatief_22
+    scope: municipality
+    higher_is_better: false
+    weight: 0.07
+    description: Lager aandeel personen in armoede
+
+  crime_per_1000:
+    column: GeregistreerdeMisdrijvenPer1000Inw_3
+    scope: municipality
+    higher_is_better: false
+    weight: 0.07
+    description: Minder geregistreerde misdrijven per 1.000 inwoners
+
+  house_price_level:
+    column: GemiddeldeVerkoopprijs_1
+    scope: municipality
+    higher_is_better: false
+    weight: 0.04
+    description: Lagere gemiddelde verkoopprijs kan wijzen op betaalbaarheid
+
+  corporatie_share:
+    numerator: EigendomWoningcorporatie_4
+    denominator: TotaleWoningvoorraad_1
+    scope: municipality
+    higher_is_better: true
+    weight: 0.08
+    description: Hoger aandeel corporatiewoningen vergroot kans op gereguleerde huur
+
+  huur_share:
+    numerator: TotaalHuurwoningen_3
+    denominator: TotaleWoningvoorraad_1
+    scope: municipality
+    higher_is_better: true
+    weight: 0.05
+    description: Groot beschikbaar huursegment vergroot slagingskans
+
+  leefbaarometer_score:
+    column: lbm
+    higher_is_better: true
+    weight: 0.08
+    description: Algemeen leefbaarheidscijfer uit Leefbaarometer 3.0
+
+  solar_capacity:
+    column: OpgesteldVermogenVanZonnepanelen_6
+    higher_is_better: true
+    weight: 0.04
+    description: Meer opgesteld PV-vermogen geeft duurzame initiatieven weer
+
+  solar_installations:
+    column: AantalInstallatiesBijWoningen_5
+    higher_is_better: true
+    weight: 0.03
+    description: Veel installaties betekent brede adoptie van zonnepanelen
+
+  wmo_clients_per_1000:
+    column: WmoClientenPer1000Inwoners_6
+    scope: municipality
+    higher_is_better: false
+    weight: 0.07
+    description: Minder Wmo-cliënten per 1.000 inwoners
