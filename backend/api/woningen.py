@@ -11,6 +11,7 @@ from services import ValuationService
 from collectors.woz_collector import create_woz_collector
 from collectors.energielabel_collector import create_energielabel_collector
 from collectors.kadaster_collector import create_kadaster_collector
+from collectors.miljoenhuizen_collector import create_miljoenhuizen_collector, MiljoenhuizenWoning
 from collectors.cbs_market_collector import create_cbs_market_collector
 from collectors.cbs_buurt_collector import create_cbs_buurt_collector, lookup_buurt_code_pdok
 from collectors.bag_collector import BagClient
@@ -157,6 +158,22 @@ class ComparablesResponse(BaseModel):
     error: Optional[str] = None
 
 
+class MiljoenhuizenVerkoop(BaseModel):
+    """A comparable sale from Miljoenhuizen.nl."""
+    url: str
+    adres: str
+    postcode: str
+    plaats: str
+    laatste_vraagprijs: Optional[int] = None
+    verkoopdatum: Optional[str] = None
+    woonoppervlakte: Optional[int] = None
+    prijs_per_m2: Optional[float] = None
+    bouwjaar: Optional[int] = None
+    woningtype: Optional[str] = None
+    geschatte_waarde_laag: Optional[int] = None
+    geschatte_waarde_hoog: Optional[int] = None
+
+
 class AddressLookupRequest(BaseModel):
     """Request for address-based data lookup."""
     postcode: str
@@ -218,6 +235,11 @@ class EnhancedWaardebepalingResponse(BaseModel):
     # Comparables summary
     comparables_count: int = 0
     comparables_avg_m2: Optional[float] = None
+
+    # Miljoenhuizen vergelijkbare verkopen
+    miljoenhuizen_verkopen: List[MiljoenhuizenVerkoop] = []
+    miljoenhuizen_count: int = 0
+    miljoenhuizen_avg_vraagprijs: Optional[int] = None
 
     # Market data (CBS StatLine)
     markt_gem_prijs: Optional[int] = None  # Regional average price
@@ -656,6 +678,19 @@ def bereken_waarde_voor_adres(
     except Exception:
         pass
 
+    # Fetch Miljoenhuizen comparable sales
+    miljoenhuizen_verkopen: List[MiljoenhuizenWoning] = []
+    try:
+        miljoenhuizen_collector = create_miljoenhuizen_collector()
+        miljoenhuizen_verkopen = miljoenhuizen_collector.get_vergelijkbare_verkopen(
+            postcode=request.postcode,
+            huisnummer=request.huisnummer,
+            woonoppervlakte=woonoppervlakte,
+            max_results=10,
+        )
+    except Exception:
+        pass
+
     # Get energielabel for valuation
     energielabel = energielabel_result.energielabel if energielabel_result else None
 
@@ -759,6 +794,8 @@ def bereken_waarde_voor_adres(
     if buurt_data and buurt_data.gem_woz_waarde:
         if "CBS Kerncijfers" not in data_bronnen:
             data_bronnen.append("CBS Kerncijfers")
+    if miljoenhuizen_verkopen:
+        data_bronnen.append("Miljoenhuizen.nl")
 
     return EnhancedWaardebepalingResponse(
         postcode=request.postcode,
@@ -793,6 +830,31 @@ def bereken_waarde_voor_adres(
         # Comparables
         comparables_count=comparables_result.count if comparables_result else 0,
         comparables_avg_m2=comparables_result.avg_prijs_per_m2 if comparables_result else None,
+        # Miljoenhuizen vergelijkbare verkopen
+        miljoenhuizen_verkopen=[
+            MiljoenhuizenVerkoop(
+                url=v.url,
+                adres=v.adres,
+                postcode=v.postcode,
+                plaats=v.plaats,
+                laatste_vraagprijs=v.laatste_vraagprijs,
+                verkoopdatum=v.verkoopdatum,
+                woonoppervlakte=v.woonoppervlakte,
+                prijs_per_m2=v.prijs_per_m2,
+                bouwjaar=v.bouwjaar,
+                woningtype=v.woningtype,
+                geschatte_waarde_laag=v.geschatte_waarde_laag,
+                geschatte_waarde_hoog=v.geschatte_waarde_hoog,
+            )
+            for v in miljoenhuizen_verkopen
+        ],
+        miljoenhuizen_count=len(miljoenhuizen_verkopen),
+        miljoenhuizen_avg_vraagprijs=(
+            int(sum(v.laatste_vraagprijs for v in miljoenhuizen_verkopen if v.laatste_vraagprijs) /
+                len([v for v in miljoenhuizen_verkopen if v.laatste_vraagprijs]))
+            if miljoenhuizen_verkopen and any(v.laatste_vraagprijs for v in miljoenhuizen_verkopen)
+            else None
+        ),
         # Market data (CBS StatLine)
         markt_gem_prijs=cbs_market_data.gemiddelde_prijs if cbs_market_data else None,
         markt_overbiedpct=cbs_market_data.overbiedingspercentage if cbs_market_data else None,

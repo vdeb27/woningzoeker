@@ -25,6 +25,12 @@ from collectors.kadaster_collector import (
     ComparablesResult,
     create_kadaster_collector,
 )
+from collectors.miljoenhuizen_collector import (
+    MiljoenhuizenCollector,
+    MiljoenhuizenWoning,
+    PrijsHistorieEntry,
+    create_miljoenhuizen_collector,
+)
 
 __all__ = [
     # BAG
@@ -55,4 +61,9 @@ __all__ = [
     "TransactionRecord",
     "ComparablesResult",
     "create_kadaster_collector",
+    # Miljoenhuizen
+    "MiljoenhuizenCollector",
+    "MiljoenhuizenWoning",
+    "PrijsHistorieEntry",
+    "create_miljoenhuizen_collector",
 ]
