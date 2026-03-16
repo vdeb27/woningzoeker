@@ -100,6 +100,7 @@ class WaardebepalingResponse(BaseModel):
     bouwjaar_correctie: int
     woningtype_correctie: int
     perceel_correctie: int = 0
+    buurt_kwaliteit_correctie: int = 0
     markt_correctie: int
 
     confidence: float
@@ -236,6 +237,7 @@ class EnhancedWaardebepalingResponse(BaseModel):
     bouwjaar_correctie: int
     woningtype_correctie: int
     perceel_correctie: int = 0
+    buurt_kwaliteit_correctie: int = 0
     markt_correctie: int
 
     confidence: float
@@ -426,6 +428,7 @@ def get_woning_waarde(woning_id: int, db: Session = Depends(get_db)):
         bouwjaar_correctie=result.bouwjaar_correctie,
         woningtype_correctie=result.woningtype_correctie,
         perceel_correctie=result.perceel_correctie,
+        buurt_kwaliteit_correctie=result.buurt_kwaliteit_correctie,
         markt_correctie=result.markt_correctie,
         confidence=result.confidence,
         confidence_factors=result.confidence_factors,
@@ -459,6 +462,7 @@ def bereken_waarde(request: WaardebepalingRequest, db: Session = Depends(get_db)
         bouwjaar_correctie=result.bouwjaar_correctie,
         woningtype_correctie=result.woningtype_correctie,
         perceel_correctie=result.perceel_correctie,
+        buurt_kwaliteit_correctie=result.buurt_kwaliteit_correctie,
         markt_correctie=result.markt_correctie,
         confidence=result.confidence,
         confidence_factors=result.confidence_factors,
@@ -998,6 +1002,7 @@ def bereken_waarde_voor_adres(
         bouwjaar_correctie=valuation.bouwjaar_correctie,
         woningtype_correctie=valuation.woningtype_correctie,
         perceel_correctie=valuation.perceel_correctie,
+        buurt_kwaliteit_correctie=valuation.buurt_kwaliteit_correctie,
         markt_correctie=valuation.markt_correctie,
         confidence=valuation.confidence,
         confidence_factors=valuation.confidence_factors,

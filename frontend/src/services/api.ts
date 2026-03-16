@@ -23,6 +23,7 @@ export interface WaardebepalingResponse {
   bouwjaar_correctie: number
   woningtype_correctie: number
   perceel_correctie: number
+  buurt_kwaliteit_correctie: number
   markt_correctie: number
   confidence: number
   confidence_factors: Record<string, unknown>
@@ -125,6 +126,7 @@ export interface EnhancedWaardebepalingResponse {
   bouwjaar_correctie: number
   woningtype_correctie: number
   perceel_correctie: number
+  buurt_kwaliteit_correctie: number
   markt_correctie: number
   confidence: number
   confidence_factors: Record<string, unknown>
@@ -181,8 +183,27 @@ export interface Buurt {
   naam: string
   gemeente_naam?: string
   score_totaal?: number
+  score_inkomen?: number
+  score_veiligheid?: number
+  score_voorzieningen?: number
+  score_woningen?: number
+  score_bereikbaarheid?: number
+  score_leefbaarheid?: number
+  score_coverage?: number
   median_vraagprijs?: number
+  median_m2_prijs?: number
   aantal_te_koop?: number
+  inwoners?: number
+  huishoudens?: number
+  gemiddeld_inkomen?: number
+  woz_waarde?: number
+  leefbaarometer_score?: number
+  leefbaarometer_fysiek?: number
+  leefbaarometer_voorzieningen?: number
+  leefbaarometer_veiligheid?: number
+  leefbaarometer_bevolking?: number
+  leefbaarometer_woningen?: number
+  indicatoren?: Record<string, number>
 }
 
 export interface WatchlistItem {
@@ -195,6 +216,33 @@ export interface WatchlistItem {
   woning_vraagprijs?: number
   woning_woonoppervlakte?: number
   added_at: string
+}
+
+// Indicator metadata types
+export interface IndicatorMeta {
+  label: string
+  category?: string
+  unit: string
+  higher_is_better: boolean
+  weight: number
+  description: string
+}
+
+export interface CategoryMeta {
+  label: string
+  color: string
+  weight: number
+  indicators: string[]
+}
+
+export interface IndicatorMetaResponse {
+  indicators: Record<string, IndicatorMeta>
+  categories: Record<string, CategoryMeta>
+}
+
+export interface BuurtVergelijkResponse {
+  buurten: Buurt[]
+  categories: Record<string, CategoryMeta>
 }
 
 // Waardebepaling
@@ -364,6 +412,26 @@ export async function fetchBuurt(code: string): Promise<Buurt> {
   return response.json()
 }
 
+export async function fetchIndicatorMeta(): Promise<IndicatorMetaResponse> {
+  const response = await fetch(`${API_BASE}/buurten/indicatoren/meta`)
+  if (!response.ok) {
+    throw new Error('Indicator metadata ophalen mislukt')
+  }
+  return response.json()
+}
+
+export async function fetchBuurtenVergelijk(
+  codes: string[]
+): Promise<BuurtVergelijkResponse> {
+  const searchParams = new URLSearchParams()
+  codes.forEach((c) => searchParams.append('codes', c))
+  const response = await fetch(`${API_BASE}/buurten/vergelijk/?${searchParams}`)
+  if (!response.ok) {
+    throw new Error('Buurtenvergelijking ophalen mislukt')
+  }
+  return response.json()
+}
+
 // Watchlist
 export async function fetchWatchlist(): Promise<WatchlistItem[]> {
   const response = await fetch(`${API_BASE}/watchlist`)
@@ -416,6 +484,7 @@ export async function updateWatchlistItem(
 export async function fetchBuurtenGeoJSON(params?: {
   gemeente?: string
   min_score?: number
+  indicator?: string
 }): Promise<GeoJSONFeatureCollection> {
   const searchParams = new URLSearchParams()
   if (params) {
