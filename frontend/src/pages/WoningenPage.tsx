@@ -30,7 +30,7 @@ function WoningCard({ woning, onAddToWatchlist }: {
         {woning.vraagprijs && (
           <div className="text-right">
             <div className="font-bold text-primary-700">{formatPrijs(woning.vraagprijs)}</div>
-            {m2Prijs && <div className="text-xs text-gray-500">{formatPrijs(m2Prijs)}/m²</div>}
+            {m2Prijs && <div className="text-sm font-medium text-primary-600">{formatPrijs(m2Prijs)}/m²</div>}
           </div>
         )}
       </div>
