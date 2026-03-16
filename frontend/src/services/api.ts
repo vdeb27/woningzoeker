@@ -102,6 +102,10 @@ export interface EnhancedWaardebepalingResponse {
   woz_waarde?: number
   woz_peiljaar?: number
   grondoppervlakte?: number
+  // Woninggegevens (auto-fetched)
+  woonoppervlakte?: number
+  bouwjaar?: number
+  woningtype?: string
   // Energielabel (auto-fetched)
   energielabel?: string
   energielabel_bron: string
@@ -174,6 +178,7 @@ export interface WatchlistItem {
   status: string
   woning_adres?: string
   woning_vraagprijs?: number
+  woning_woonoppervlakte?: number
   added_at: string
 }
 
