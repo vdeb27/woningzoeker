@@ -174,6 +174,7 @@ export interface WatchlistItem {
   status: string
   woning_adres?: string
   woning_vraagprijs?: number
+  woning_woonoppervlakte?: number
   added_at: string
 }
 

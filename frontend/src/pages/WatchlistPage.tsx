@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   fetchWatchlist,
@@ -59,8 +60,15 @@ function WatchlistCard({
         <div>
           <h3 className="font-semibold text-gray-900">{item.woning_adres}</h3>
           {item.woning_vraagprijs && (
-            <div className="text-primary-700 font-medium">
-              {formatPrijs(item.woning_vraagprijs)}
+            <div>
+              <div className="text-primary-700 font-medium">
+                {formatPrijs(item.woning_vraagprijs)}
+              </div>
+              {item.woning_woonoppervlakte && item.woning_woonoppervlakte > 0 && (
+                <div className="text-sm font-medium text-primary-600">
+                  {formatPrijs(Math.round(item.woning_vraagprijs / item.woning_woonoppervlakte))}/m²
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -106,8 +114,11 @@ function WatchlistCard({
   )
 }
 
+type SortOption = 'prioriteit' | 'prijs' | 'prijs_m2'
+
 export default function WatchlistPage() {
   const queryClient = useQueryClient()
+  const [sortBy, setSortBy] = useState<SortOption>('prioriteit')
 
   const { data: items, isLoading, error } = useQuery({
     queryKey: ['watchlist'],
@@ -158,7 +169,22 @@ export default function WatchlistPage() {
   return (
     <div>
       <h1 className="text-3xl font-bold text-gray-900 mb-2">Watchlist</h1>
-      <p className="text-gray-600 mb-8">Volg woningen die je interessant vindt</p>
+      <p className="text-gray-600 mb-4">Volg woningen die je interessant vindt</p>
+
+      {items && items.length > 0 && (
+        <div className="flex items-center gap-2 mb-6">
+          <span className="text-sm text-gray-600">Sorteer op:</span>
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as SortOption)}
+            className="text-sm border border-gray-300 rounded px-2 py-1"
+          >
+            <option value="prioriteit">Prioriteit</option>
+            <option value="prijs">Prijs</option>
+            <option value="prijs_m2">Prijs/m² (laag → hoog)</option>
+          </select>
+        </div>
+      )}
 
       {isLoading && (
         <div className="text-center py-12 text-gray-500">Watchlist laden...</div>
@@ -192,7 +218,19 @@ export default function WatchlistPage() {
                 </h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {statusItems
-                    .sort((a, b) => b.prioriteit - a.prioriteit)
+                    .sort((a, b) => {
+                      if (sortBy === 'prijs') {
+                        return (b.woning_vraagprijs || 0) - (a.woning_vraagprijs || 0)
+                      }
+                      if (sortBy === 'prijs_m2') {
+                        const aM2 = a.woning_vraagprijs && a.woning_woonoppervlakte
+                          ? a.woning_vraagprijs / a.woning_woonoppervlakte : 0
+                        const bM2 = b.woning_vraagprijs && b.woning_woonoppervlakte
+                          ? b.woning_vraagprijs / b.woning_woonoppervlakte : 0
+                        return aM2 - bM2
+                      }
+                      return b.prioriteit - a.prioriteit
+                    })
                     .map((item) => (
                       <WatchlistCard
                         key={item.id}
