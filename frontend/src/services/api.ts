@@ -146,6 +146,21 @@ export interface EnhancedWaardebepalingResponse {
   data_bronnen: string[]
 }
 
+// GeoJSON types
+export interface GeoJSONFeature {
+  type: 'Feature'
+  geometry: {
+    type: string
+    coordinates: unknown
+  }
+  properties: Record<string, unknown>
+}
+
+export interface GeoJSONFeatureCollection {
+  type: 'FeatureCollection'
+  features: GeoJSONFeature[]
+}
+
 export interface Woning {
   id: number
   adres: string
@@ -393,6 +408,34 @@ export async function updateWatchlistItem(
   })
   if (!response.ok) {
     throw new Error('Bijwerken watchlist mislukt')
+  }
+  return response.json()
+}
+
+// GeoJSON endpoints
+export async function fetchBuurtenGeoJSON(params?: {
+  gemeente?: string
+  min_score?: number
+}): Promise<GeoJSONFeatureCollection> {
+  const searchParams = new URLSearchParams()
+  if (params) {
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined) {
+        searchParams.append(key, String(value))
+      }
+    })
+  }
+  const response = await fetch(`${API_BASE}/buurten/geojson?${searchParams}`)
+  if (!response.ok) {
+    throw new Error('Buurtgrenzen ophalen mislukt')
+  }
+  return response.json()
+}
+
+export async function fetchWoningenGeoJSON(): Promise<GeoJSONFeatureCollection> {
+  const response = await fetch(`${API_BASE}/woningen/geojson`)
+  if (!response.ok) {
+    throw new Error('Woningen GeoJSON ophalen mislukt')
   }
   return response.json()
 }
