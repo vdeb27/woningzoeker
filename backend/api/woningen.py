@@ -205,6 +205,11 @@ class EnhancedWaardebepalingResponse(BaseModel):
     woz_peiljaar: Optional[int] = None
     grondoppervlakte: Optional[int] = None
 
+    # Woninggegevens (auto-fetched)
+    woonoppervlakte: Optional[int] = None
+    bouwjaar: Optional[int] = None
+    woningtype: Optional[str] = None
+
     # Energielabel (auto-fetched)
     energielabel: Optional[str] = None
     energielabel_bron: str = "auto"  # "auto" or "manual"
@@ -805,6 +810,10 @@ def bereken_waarde_voor_adres(
         woz_waarde=woz_result.woz_waarde if woz_result else None,
         woz_peiljaar=woz_result.peiljaar if woz_result else None,
         grondoppervlakte=grondoppervlakte,
+        # Woninggegevens
+        woonoppervlakte=woonoppervlakte,
+        bouwjaar=bouwjaar,
+        woningtype=request.woningtype,
         # Energielabel
         energielabel=energielabel,
         energielabel_bron="auto" if energielabel else "niet_gevonden",
