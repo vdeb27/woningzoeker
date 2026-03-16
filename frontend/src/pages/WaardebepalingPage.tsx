@@ -403,6 +403,14 @@ function AnalyseColumn({ result, onCopy, copied }: {
               </span>
             </div>
           )}
+          {result.buurt_kwaliteit_correctie !== 0 && (
+            <div className="flex justify-between">
+              <span className="text-gray-600">Buurtcorrectie (kwaliteit)</span>
+              <span className={result.buurt_kwaliteit_correctie >= 0 ? 'text-green-600' : 'text-red-600'}>
+                {result.buurt_kwaliteit_correctie >= 0 ? '+' : ''}{formatPrijs(result.buurt_kwaliteit_correctie)}
+              </span>
+            </div>
+          )}
           <div className="flex justify-between">
             <span className="text-gray-600">Marktcorrectie (overbieden)</span>
             <span className="text-green-600">
