@@ -237,6 +237,11 @@ function AnalyseColumn({ result, onCopy, copied }: {
           <div className="text-gray-500 mt-1">
             {formatPrijs(result.waarde_laag)} - {formatPrijs(result.waarde_hoog)}
           </div>
+          {result.woonoppervlakte && (
+            <div className="text-sm text-gray-500 mt-1">
+              {formatM2Prijs(result.waarde_midden / result.woonoppervlakte)}
+            </div>
+          )}
         </div>
 
         <ConfidenceBar confidence={result.confidence} />
@@ -247,6 +252,12 @@ function AnalyseColumn({ result, onCopy, copied }: {
               <span className="text-gray-600">Vraagprijs</span>
               <span className="font-medium">{formatPrijs(result.vraagprijs)}</span>
             </div>
+            {result.woonoppervlakte && (
+              <div className="flex justify-between items-center mt-1">
+                <span className="text-gray-600">Vraagprijs/m²</span>
+                <span className="font-medium">{formatM2Prijs(result.vraagprijs! / result.woonoppervlakte)}</span>
+              </div>
+            )}
             {result.verschil_percentage !== null && result.verschil_percentage !== undefined && (
               <div className="flex justify-between items-center mt-1">
                 <span className="text-gray-600">Verschil</span>
@@ -267,26 +278,28 @@ function AnalyseColumn({ result, onCopy, copied }: {
       </div>
 
       {/* Biedadvies */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <h3 className="text-lg font-semibold mb-4">Biedadvies</h3>
-        <div className="flex items-center justify-between">
-          <BiedAdviesBadge advies={result.bied_advies} />
-        </div>
-        <div className="mt-4 bg-gray-50 rounded-lg p-4">
-          <div className="text-sm text-gray-600">Aanbevolen biedingsbereik</div>
+      {result.vraagprijs && (
+        <div className="bg-white rounded-lg shadow p-6">
+          <h3 className="text-lg font-semibold mb-4">Biedadvies</h3>
           <div className="flex items-center justify-between">
-            <div className="text-xl font-semibold">
-              {formatPrijs(result.bied_range_laag)} - {formatPrijs(result.bied_range_hoog)}
+            <BiedAdviesBadge advies={result.bied_advies} />
+          </div>
+          <div className="mt-4 bg-gray-50 rounded-lg p-4">
+            <div className="text-sm text-gray-600">Aanbevolen biedingsbereik</div>
+            <div className="flex items-center justify-between">
+              <div className="text-xl font-semibold">
+                {formatPrijs(result.bied_range_laag)} - {formatPrijs(result.bied_range_hoog)}
+              </div>
+              <button
+                onClick={() => onCopy(result.waarde_midden)}
+                className="px-3 py-1 text-sm font-medium rounded-lg bg-primary-100 text-primary-700 hover:bg-primary-200 transition-colors"
+              >
+                {copied ? 'Gekopieerd!' : 'Kopieer bedrag'}
+              </button>
             </div>
-            <button
-              onClick={() => onCopy(result.waarde_midden)}
-              className="px-3 py-1 text-sm font-medium rounded-lg bg-primary-100 text-primary-700 hover:bg-primary-200 transition-colors"
-            >
-              {copied ? 'Gekopieerd!' : 'Kopieer bedrag'}
-            </button>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Vergelijkbare verkopen */}
       <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
@@ -300,6 +313,17 @@ function AnalyseColumn({ result, onCopy, copied }: {
                 Gem. {formatM2Prijs(result.comparables_avg_m2)}
               </div>
             )}
+            {result.comparables_avg_m2 && result.woonoppervlakte && (() => {
+              const geschatM2 = result.waarde_midden / result.woonoppervlakte
+              const verschilPct = ((geschatM2 - result.comparables_avg_m2!) / result.comparables_avg_m2!) * 100
+              const color = verschilPct < -10 ? 'text-green-700 bg-green-100' : verschilPct > 10 ? 'text-red-700 bg-red-100' : 'text-yellow-700 bg-yellow-100'
+              const label = verschilPct < -10 ? 'Onder buurtgemiddelde' : verschilPct > 10 ? 'Boven buurtgemiddelde' : 'Rond buurtgemiddelde'
+              return (
+                <div className={`text-xs font-medium mt-2 px-2 py-1 rounded-full inline-block ${color}`}>
+                  {label} ({verschilPct > 0 ? '+' : ''}{verschilPct.toFixed(0)}%)
+                </div>
+              )
+            })()}
           </div>
         ) : (
           <div className="text-sm text-purple-600 mt-1">
