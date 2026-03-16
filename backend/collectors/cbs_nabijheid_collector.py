@@ -25,31 +25,30 @@ CACHE_DURATION_SECONDS = 30 * 24 * 60 * 60  # 30 days
 
 TARGET_MUNICIPALITIES = ["0518", "1916", "0603"]
 
-# Nabijheid columns - distances to various facilities
+# Nabijheid columns - distances to various facilities (dataset 80306ned)
 NABIJHEID_COLUMNS = {
-    "afstand_huisarts": "AfstandTotHuisartsenpraktijk_1",
-    "afstand_apotheek": "AfstandTotApotheek_2",
-    "afstand_ziekenhuis_excl_buitenpoli": "AfstandTotZiekenhuisExclBuitenpoli_3",
-    "afstand_ziekenhuis_incl_buitenpoli": "AfstandTotZiekenhuisInclBuitenpoli_4",
-    "afstand_kinderdagverblijf": "AfstandTotKinderdagverblijf_5",
-    "afstand_buitenschoolse_opvang": "AfstandTotBuitenschoolseOpvang_6",
-    "afstand_basisonderwijs": "AfstandTotBasisschool_7",
-    "afstand_vmbo": "AfstandTotLocatieVmbo_8",
-    "afstand_havo_vwo": "AfstandTotLocatieHavoVwo_9",
-    "afstand_supermarkt": "AfstandTotSupermarkt_10",
-    "afstand_warenhuis": "AfstandTotWarenhuis_11",
-    "afstand_cafe": "AfstandTotCafe_14",
-    "afstand_restaurant": "AfstandTotRestaurant_16",
-    "afstand_hotel": "AfstandTotHotel_17",
-    "afstand_bioscoop": "AfstandTotBioscoop_19",
-    "afstand_bibliotheek": "AfstandTotBibliotheek_21",
-    "afstand_zwembad": "AfstandTotZwembad_22",
-    "afstand_sporthal": "AfstandTotSporthal_24",
-    "afstand_museum": "AfstandTotMuseum_26",
-    "afstand_attractiepark": "AfstandTotAttractiepark_28",
-    "afstand_brandweerkazerne": "AfstandTotBrandweerkazerne_29",
-    "afstand_oprit_hoofdverkeersweg": "AfstandTotOpritHoofdverkeersweg_30",
-    "afstand_treinstation": "AfstandTotTreinstation_31",
+    "afstand_huisarts": "AfstandTotHuisartsenpraktijk_4",
+    "afstand_apotheek": "AfstandTotApotheek_9",
+    "afstand_ziekenhuis": "AfstandTotZiekenhuis_10",
+    "afstand_kinderdagverblijf": "AfstandTotKinderdagverblijf_51",
+    "afstand_buitenschoolse_opvang": "AfstandTotBuitenschoolseOpvang_55",
+    "afstand_basisonderwijs": "AfstandTotSchool_59",
+    "afstand_supermarkt": "AfstandTotGroteSupermarkt_23",
+    "afstand_warenhuis": "AfstandTotWarenhuis_31",
+    "afstand_cafe": "AfstandTotCafe_35",
+    "afstand_restaurant": "AfstandTotRestaurant_43",
+    "afstand_hotel": "AfstandTotHotel_47",
+    "afstand_bioscoop": "AfstandTotBioscoop_103",
+    "afstand_bibliotheek": "AfstandTotBibliotheek_91",
+    "afstand_zwembad": "AfstandTotZwembad_92",
+    "afstand_sportterrein": "AfstandTotSportterrein_83",
+    "afstand_museum": "AfstandTotMuseum_94",
+    "afstand_attractiepark": "AfstandTotAttractie_109",
+    "afstand_brandweerkazerne": "AfstandTotBrandweerkazerne_113",
+    "afstand_oprit_hoofdverkeersweg": "AfstandTotOpritHoofdverkeersweg_88",
+    "afstand_treinstation": "AfstandTotTreinstationsTotaal_89",
+    "afstand_overstapstation": "AfstandTotBelangrijkOverstapstation_90",
+    "afstand_park": "AfstandTotParkOfPlantsoen_76",
 }
 
 
@@ -109,34 +108,30 @@ class CBSNabijheidCollector:
             pass
 
     def _fetch_from_cbs(self) -> None:
-        """Fetch nabijheid data from CBS OData API."""
-        code_filters = []
-        for muni_code in TARGET_MUNICIPALITIES:
-            code_filters.append(f"startswith(Codering_3,'BU{muni_code}')")
+        """Fetch nabijheid data from CBS OData API.
 
-        params = {
-            "$filter": " or ".join(code_filters),
-        }
+        Uses cbsodata which handles pagination. CBS OData ignores $filter
+        on Codering_3, so we fetch all with $select and filter client-side.
+        """
+        import cbsodata
 
-        base_url = f"{CBS_API_BASE}/{DATASET_NABIJHEID}/TypedDataSet"
-        records = []
-        url = base_url
-        first_request = True
+        select_cols = ["Codering_3"]
+        select_cols.extend(NABIJHEID_COLUMNS.values())
 
-        while url:
-            try:
-                if first_request:
-                    response = requests.get(url, params=params, timeout=120)
-                    first_request = False
-                else:
-                    response = requests.get(url, timeout=120)
-                response.raise_for_status()
-                data = response.json()
-            except requests.RequestException as exc:
-                raise RuntimeError(f"Failed to fetch CBS nabijheid data: {exc}") from exc
+        try:
+            all_records = cbsodata.get_data(
+                DATASET_NABIJHEID,
+                select=select_cols,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Failed to fetch CBS nabijheid data: {exc}") from exc
 
-            records.extend(data.get("value", []))
-            url = data.get("odata.nextLink") or data.get("@odata.nextLink")
+        # Filter to target municipalities client-side
+        target_prefixes = tuple(f"BU{m}" for m in TARGET_MUNICIPALITIES)
+        records = [
+            r for r in all_records
+            if str(r.get("Codering_3", "")).strip().startswith(target_prefixes)
+        ]
 
         for record in records:
             buurt_code = str(record.get("Codering_3", "")).strip()

@@ -44,62 +44,52 @@ HOUSING_COLUMNS = {
     "gehuwd": "Gehuwd_14",
     "gescheiden": "Gescheiden_15",
     "verweduwd": "Verweduwd_16",
-    "bevolkingsdichtheid": "Bevolkingsdichtheid_33",
-    "huishoudens_totaal": "HuishoudensTotaal_28",
-    "eenpersoons_huishoudens": "Eenpersoonshuishoudens_29",
-    "huishoudens_zonder_kinderen": "HuishoudensZonderKinderen_30",
-    "huishoudens_met_kinderen": "HuishoudensMetKinderen_31",
-    "gem_huishoudensgrootte": "GemiddeldeHuishoudensgrootte_32",
+    "bevolkingsdichtheid": "Bevolkingsdichtheid_34",
+    "huishoudens_totaal": "HuishoudensTotaal_29",
+    "eenpersoons_huishoudens": "Eenpersoonshuishoudens_30",
+    "huishoudens_zonder_kinderen": "HuishoudensZonderKinderen_31",
+    "huishoudens_met_kinderen": "HuishoudensMetKinderen_32",
+    "gem_huishoudensgrootte": "GemiddeldeHuishoudensgrootte_33",
 
     # === Woningen ===
-    "woningvoorraad": "Woningvoorraad_34",
-    "woz_waarde": "GemiddeldeWOZWaardeVanWoningen_35",
-    "koopwoningen_pct": "Koopwoningen_40",
-    "huurwoningen_pct": "HuurwoningenTotaal_41",
-    "huur_corporatie_pct": "InBezitWoningcorporatie_42",
-    "huur_overig_pct": "InBezitOverigeVerhuurders_43",
-    "eigendom_onbekend_pct": "EigendomOnbekend_44",
-    "bouwjaar_voor_2000_pct": "BouwjaarVoor2000_53",
-    "bouwjaar_vanaf_2000_pct": "BouwjaarVanaf2000_54",
+    "woningvoorraad": "Woningvoorraad_35",
+    "woz_waarde": "GemiddeldeWOZWaardeVanWoningen_36",
+    "koopwoningen_pct": "Koopwoningen_41",
+    "huurwoningen_pct": "HuurwoningenTotaal_42",
+    "huur_corporatie_pct": "InBezitWoningcorporatie_43",
+    "huur_overig_pct": "InBezitOverigeVerhuurders_44",
+    "eigendom_onbekend_pct": "EigendomOnbekend_45",
+    "bouwjaar_voor_2000_pct": "BouwjaarVoor2000_46",
+    "bouwjaar_vanaf_2000_pct": "BouwjaarVanaf2000_47",
 
     # === Energie ===
-    "gem_gasverbruik": "GemiddeldAardgasverbruikTotaal_27",
-    "gem_elektraverbruik": "GemiddeldeElektriciteitsleveringTotaal_23",
+    "gem_gasverbruik": "GemiddeldAardgasverbruikTotaal_56",
+    "gem_elektraverbruik": "GemiddeldeElektriciteitsleveringTotaal_48",
 
     # === Inkomen ===
-    "gem_inkomen": "GemiddeldInkomenPerInwoner_66",
-    "gem_inkomen_ontvanger": "GemiddeldInkomenPerInkomensontvwordt_67",
-    "huishoudens_laag_inkomen_pct": "HuishoudensMetEenLaagInkomen_70",
-    "huishoudens_hoog_inkomen_pct": "HuishoudensMetEenHoogInkomen_71",
-    "huishoudens_onder_of_rond_sociaal_minimum": "HuishOnderOfRondSociaalMinimum_72",
+    "gem_inkomen": "GemiddeldInkomenPerInwoner_81",
+    "gem_inkomen_ontvanger": "GemiddeldInkomenPerInkomensontvanger_80",
+    "huishoudens_laag_inkomen_pct": "HuishoudensMetEenLaagInkomen_87",
+    "huishoudens_hoog_inkomen_pct": "k_20HuishoudensMetHoogsteInkomen_86",
+    "huishoudens_onder_of_rond_sociaal_minimum": "HuishOnderOfRondSociaalMinimum_88",
 
     # === Uitkeringen ===
-    "bijstandsuitkeringen_per_1000": "PersonenPerSoortUitkBijwordt_75",
-    "ao_uitkeringen_per_1000": "PersonenPerSoortUitkAO_76",
-    "ww_uitkeringen_per_1000": "PersonenPerSoortUitkWW_77",
-    "aow_uitkeringen_per_1000": "PersonenPerSoortUitkAOW_78",
+    "bijstandsuitkeringen_per_1000": "PersonenPerSoortUitkeringBijstand_92",
+    "ao_uitkeringen_per_1000": "PersonenPerSoortUitkeringAO_93",
+    "ww_uitkeringen_per_1000": "PersonenPerSoortUitkeringWW_94",
+    "aow_uitkeringen_per_1000": "PersonenPerSoortUitkeringAOW_95",
 
     # === Motorvoertuigen ===
     "personenautos_totaal": "PersonenautoSTotaal_109",
-    "personenautos_per_huishouden": "PersonenautoSPerHuishouden_110",
-    "personenautos_brandstof_benzine": "Personenautos_111",  # benzine
-    "personenautos_brandstof_overig": "PersonenautoSOverigeBrandstof_112",
+    "personenautos_per_huishouden": "PersonenautoSPerHuishouden_112",
+    "personenautos_brandstof_benzine": "PersonenautoSBrandstofBenzine_110",
+    "personenautos_brandstof_overig": "PersonenautoSOverigeBrandstof_111",
 
     # === Voorzieningen (afstanden in km) ===
-    "afstand_huisartsenpraktijk": "AfstandTotHuisartsenpraktijk_100",
-    "afstand_ziekenhuis": "AfstandTotZiekenhuis_102",
-    "afstand_basisonderwijs": "AfstandTotSchoolBasisonderwijs_97",
-    "afstand_voortgezet_onderwijs": "AfstandTotSchoolVoortgezetOndwordt_98",
-    "afstand_kinderdagverblijf": "AfstandTotKinderdagverblijf_96",
-    "afstand_grote_supermarkt": "AfstandTotGroteSupermarkt_92",
-    "afstand_cafe": "AfstandTotCafe_89",
-    "afstand_restaurant": "AfstandTotRestaurant_95",
-    "afstand_bioscoop": "AfstandTotBioscoop_87",
-    "afstand_zwembad": "AfstandTotZwembad_106",
-    "afstand_sportterrein": "AfstandTotSportterrein_105",
-    "afstand_bibliotheek": "AfstandTotBibliotheek_86",
-    "afstand_oprit_hoofdverkeersweg": "AfstandTotOpritHoofdverkeersweg_93",
-    "afstand_treinstation": "AfstandTotBelangrijkOverstapstation_88",
+    "afstand_huisartsenpraktijk": "AfstandTotHuisartsenpraktijk_115",
+    "afstand_kinderdagverblijf": "AfstandTotKinderdagverblijf_117",
+    "afstand_school": "AfstandTotSchool_118",
+    "afstand_grote_supermarkt": "AfstandTotGroteSupermarkt_116",
 }
 
 
@@ -209,35 +199,31 @@ class CBSBuurtCollector:
             pass
 
     def _fetch_from_cbs(self) -> None:
-        """Fetch buurt data from CBS OData API."""
-        # Build filter for target municipalities
-        code_filters = []
-        for muni_code in TARGET_MUNICIPALITIES:
-            code_filters.append(f"startswith(Codering_3,'BU{muni_code}')")
+        """Fetch buurt data from CBS OData API.
 
-        params = {
-            "$filter": " or ".join(code_filters),
-        }
+        Uses cbsodata which handles pagination. CBS OData ignores $filter
+        on Codering_3, so we fetch all records with $select and filter
+        client-side.
+        """
+        import cbsodata
 
-        base_url = f"{CBS_API_BASE}/{DATASET_KERNCIJFERS}/TypedDataSet"
-        records = []
-        url = base_url
-        first_request = True
+        select_cols = ["Codering_3", "WijkenEnBuurten", "Gemeentenaam_1"]
+        select_cols.extend(HOUSING_COLUMNS.values())
 
-        while url:
-            try:
-                if first_request:
-                    response = requests.get(url, params=params, timeout=120)
-                    first_request = False
-                else:
-                    response = requests.get(url, timeout=120)
-                response.raise_for_status()
-                data = response.json()
-            except requests.RequestException as exc:
-                raise RuntimeError(f"Failed to fetch CBS buurt data: {exc}") from exc
+        try:
+            all_records = cbsodata.get_data(
+                DATASET_KERNCIJFERS,
+                select=select_cols,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Failed to fetch CBS buurt data: {exc}") from exc
 
-            records.extend(data.get("value", []))
-            url = data.get("odata.nextLink") or data.get("@odata.nextLink")
+        # Filter to target municipalities client-side
+        target_prefixes = tuple(f"BU{m}" for m in TARGET_MUNICIPALITIES)
+        records = [
+            r for r in all_records
+            if str(r.get("Codering_3", "")).strip().startswith(target_prefixes)
+        ]
 
         # Parse records into BuurtData objects
         for record in records:
