@@ -21,7 +21,7 @@ class Buurt(Base):
     wijk_code = Column(String(20))
     wijk_naam = Column(String(200))
 
-    # CBS Statistics
+    # CBS Statistics (core fields)
     inwoners = Column(Integer)
     huishoudens = Column(Integer)
     gemiddeld_inkomen = Column(Float)
@@ -29,6 +29,9 @@ class Buurt(Base):
     gasverbruik = Column(Float)
     elektraverbruik = Column(Float)
     arbeidsparticipatie = Column(Float)
+
+    # Extended indicators (JSON blob with all CBS + Leefbaarometer + RIVM data)
+    indicatoren = Column(JSON)
 
     # Computed scores (0-1 normalized)
     score_totaal = Column(Float)
@@ -38,8 +41,19 @@ class Buurt(Base):
     score_woningen = Column(Float)
     score_coverage = Column(Float)  # How much data was available for scoring
 
+    # Category scores
+    score_bereikbaarheid = Column(Float)
+    score_energie = Column(Float)
+    score_demografie = Column(Float)
+    score_leefbaarheid = Column(Float)
+
     # Leefbaarometer
     leefbaarometer_score = Column(Float)
+    leefbaarometer_fysiek = Column(Float)
+    leefbaarometer_voorzieningen = Column(Float)
+    leefbaarometer_veiligheid = Column(Float)
+    leefbaarometer_bevolking = Column(Float)
+    leefbaarometer_woningen = Column(Float)
 
     # Price statistics (from Funda data)
     median_vraagprijs = Column(Integer)

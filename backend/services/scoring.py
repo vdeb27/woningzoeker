@@ -14,6 +14,7 @@ class ScoringService:
     Calculate composite scores for neighborhoods based on CBS indicators.
 
     Uses min-max normalization and weighted averaging.
+    Supports category-level scores for radar chart visualization.
     """
 
     def __init__(self, config_path: Optional[Path] = None):
@@ -21,11 +22,12 @@ class ScoringService:
             config_path = Path(__file__).parent.parent.parent / "config" / "scoring.yaml"
         self.config = self._load_config(config_path)
         self.indicators = self.config.get("indicators", {})
+        self.categories = self.config.get("categories", {})
 
     def _load_config(self, path: Path) -> Dict[str, Any]:
         """Load scoring configuration from YAML."""
         if not path.exists():
-            return {"indicators": {}}
+            return {"indicators": {}, "categories": {}}
         with path.open("r", encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
 
@@ -164,7 +166,48 @@ class ScoringService:
         result["score"] = scores
         result["score_coverage"] = coverages
 
+        # Calculate category scores
+        result = self._calculate_category_scores(result, weight_map)
+
         return result.sort_values("score", ascending=False)
+
+    def _calculate_category_scores(
+        self,
+        df: pd.DataFrame,
+        weight_map: Dict[str, float],
+    ) -> pd.DataFrame:
+        """
+        Calculate per-category scores (weighted average of indicators in each category).
+
+        Adds columns: score_inkomen, score_veiligheid, score_voorzieningen,
+        score_woningen, score_bereikbaarheid, score_leefbaarheid
+        """
+        for cat_id, cat_spec in self.categories.items():
+            cat_indicators = cat_spec.get("indicators", [])
+            col_name = f"score_{cat_id}"
+
+            cat_scores = []
+            for idx in range(len(df)):
+                numer = 0.0
+                denom = 0.0
+
+                for ind_id in cat_indicators:
+                    norm_col = f"{ind_id}_norm"
+                    if norm_col in df.columns:
+                        value = df.iloc[idx][norm_col]
+                        weight = weight_map.get(ind_id, 0.0)
+                        if pd.notna(value) and weight > 0:
+                            numer += value * weight
+                            denom += weight
+
+                if denom > 0:
+                    cat_scores.append(numer / denom)
+                else:
+                    cat_scores.append(pd.NA)
+
+            df[col_name] = cat_scores
+
+        return df
 
     def get_indicator_descriptions(self) -> Dict[str, str]:
         """Get descriptions for all indicators."""
@@ -179,3 +222,37 @@ class ScoringService:
             ind_id: spec.get("weight", 0.0)
             for ind_id, spec in self.indicators.items()
         }
+
+    def get_indicator_meta(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get full metadata for all indicators.
+
+        Returns dict of indicator_id -> {label, category, unit, higher_is_better, weight, description}
+        """
+        meta = {}
+        for ind_id, spec in self.indicators.items():
+            meta[ind_id] = {
+                "label": spec.get("label", ind_id),
+                "category": spec.get("category"),
+                "unit": spec.get("unit", ""),
+                "higher_is_better": spec.get("higher_is_better", True),
+                "weight": spec.get("weight", 0.0),
+                "description": spec.get("description", ""),
+            }
+        return meta
+
+    def get_category_meta(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get metadata for all categories.
+
+        Returns dict of category_id -> {label, color, weight, indicators}
+        """
+        meta = {}
+        for cat_id, cat_spec in self.categories.items():
+            meta[cat_id] = {
+                "label": cat_spec.get("label", cat_id),
+                "color": cat_spec.get("color", "#6b7280"),
+                "weight": cat_spec.get("weight", 0.0),
+                "indicators": cat_spec.get("indicators", []),
+            }
+        return meta
