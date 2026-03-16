@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from models import get_db, Woning
+from models import get_db, Woning, Transactie
 from services import ValuationService
 from collectors.woz_collector import create_woz_collector
 from collectors.energielabel_collector import create_energielabel_collector
@@ -15,6 +15,9 @@ from collectors.miljoenhuizen_collector import create_miljoenhuizen_collector, M
 from collectors.cbs_market_collector import create_cbs_market_collector
 from collectors.cbs_buurt_collector import create_cbs_buurt_collector, lookup_buurt_code_pdok
 from collectors.bag_collector import BagClient
+from collectors.kadaster_collector import TransactionRecord
+from datetime import datetime, timedelta
+from sqlalchemy import and_
 import os
 
 router = APIRouter(prefix="/api/woningen", tags=["woningen"])
@@ -520,6 +523,45 @@ def lookup_energielabel(request: AddressLookupRequest):
 # Comparable Sales Endpoints
 # ============================================================================
 
+def _get_db_comparables(
+    db: Session,
+    postcode: str,
+    huisnummer: int,
+    max_years: int = 2,
+) -> List[TransactionRecord]:
+    """Query the transacties table for comparable sales in the same PC4 area."""
+    pc = postcode.replace(" ", "").upper()
+    pc4 = pc[:4]
+    date_since = datetime.now() - timedelta(days=max_years * 365)
+
+    rows = db.query(Transactie).filter(
+        and_(
+            Transactie.pc4 == pc4,
+            Transactie.transactie_datum >= date_since.date(),
+            # Exclude the target property itself
+            ~and_(Transactie.postcode == pc, Transactie.huisnummer == huisnummer),
+        )
+    ).order_by(Transactie.transactie_datum.desc()).all()
+
+    return [
+        TransactionRecord(
+            postcode=row.postcode,
+            huisnummer=row.huisnummer,
+            straat=row.straat,
+            woonplaats=row.woonplaats,
+            transactie_datum=str(row.transactie_datum) if row.transactie_datum else None,
+            transactie_prijs=row.transactie_prijs,
+            koopsom=row.transactie_prijs,
+            oppervlakte=row.woonoppervlakte,
+            prijs_per_m2=row.prijs_per_m2,
+            bouwjaar=row.bouwjaar,
+            woningtype=row.woningtype,
+            koopjaar=row.koopjaar,
+        )
+        for row in rows
+    ]
+
+
 @router.get("/comparables", response_model=ComparablesResponse)
 def get_comparables(
     postcode: str = Query(..., description="Postcode"),
@@ -527,13 +569,20 @@ def get_comparables(
     oppervlakte: Optional[int] = Query(None, description="Living area in m² for filtering"),
     max_years: int = Query(2, description="Maximum age of transactions in years"),
     max_results: int = Query(10, le=25, description="Maximum number of comparables"),
+    db: Session = Depends(get_db),
 ):
     """
     Get comparable recent sales in the neighborhood.
 
-    Searches for recently sold properties with similar characteristics
-    in the same postal code area (PC4).
+    Combines data from the local transaction database (bulk-downloaded)
+    with live-scraped results from OpenKadaster.
     """
+    pc = postcode.replace(" ", "").upper()
+
+    # 1. Query local database first (bulk-downloaded data)
+    db_transactions = _get_db_comparables(db, postcode, huisnummer, max_years)
+
+    # 2. Also try live scraping from OpenKadaster
     collector = create_kadaster_collector()
     result = collector.get_comparables(
         postcode=postcode,
@@ -542,6 +591,35 @@ def get_comparables(
         max_years=max_years,
         max_results=max_results,
     )
+
+    # 3. Merge: deduplicate by (postcode, huisnummer, transactie_datum)
+    seen = set()
+    merged = []
+
+    for t in db_transactions:
+        key = (t.postcode, t.huisnummer, t.transactie_datum)
+        if key not in seen:
+            seen.add(key)
+            merged.append(t)
+
+    for t in result.transactions:
+        key = (t.postcode, t.huisnummer, t.transactie_datum)
+        if key not in seen:
+            seen.add(key)
+            merged.append(t)
+
+    # Sort by relevance: same PC6 > same PC4, and more recent first
+    def sort_key(t):
+        pc6_match = 1 if t.postcode == pc else 0
+        opp_match = 0
+        if oppervlakte and t.oppervlakte:
+            diff = abs(t.oppervlakte - oppervlakte) / oppervlakte
+            opp_match = 1 if diff < 0.2 else 0
+        date_str = t.transactie_datum or ""
+        return (pc6_match, opp_match, date_str)
+
+    merged.sort(key=sort_key, reverse=True)
+    merged = merged[:max_results]
 
     transactions = [
         TransactionResponse(
@@ -556,17 +634,22 @@ def get_comparables(
             bouwjaar=t.bouwjaar,
             woningtype=t.woningtype,
         )
-        for t in result.transactions
+        for t in merged
     ]
+
+    avg_m2 = None
+    prices_m2 = [t.prijs_per_m2 for t in merged if t.prijs_per_m2]
+    if prices_m2:
+        avg_m2 = sum(prices_m2) / len(prices_m2)
 
     return ComparablesResponse(
         target_postcode=result.target_postcode,
         target_huisnummer=result.target_huisnummer,
         target_address=result.target_address,
         transactions=transactions,
-        avg_prijs_per_m2=result.avg_prijs_per_m2,
-        count=result.count,
-        search_radius_pc4=result.search_radius_pc4,
+        avg_prijs_per_m2=avg_m2 or result.avg_prijs_per_m2,
+        count=len(transactions),
+        search_radius_pc4=True,
         error=result.error,
     )
 
@@ -666,7 +749,7 @@ def bereken_waarde_voor_adres(
             detail="Woonoppervlakte kon niet automatisch worden opgehaald. Vul de woonoppervlakte in."
         )
 
-    # Fetch comparables
+    # Fetch comparables: combine database + live scraping
     comparables_result = None
     try:
         kadaster_collector = create_kadaster_collector()
@@ -675,6 +758,15 @@ def bereken_waarde_voor_adres(
             huisnummer=request.huisnummer,
             oppervlakte=woonoppervlakte,
         )
+        # Enrich with database transactions
+        db_transactions = _get_db_comparables(db, request.postcode, request.huisnummer)
+        if db_transactions:
+            seen = {(t.postcode, t.huisnummer, t.transactie_datum) for t in comparables_result.transactions}
+            for t in db_transactions:
+                key = (t.postcode, t.huisnummer, t.transactie_datum)
+                if key not in seen:
+                    seen.add(key)
+                    comparables_result.transactions.append(t)
     except Exception:
         pass
 
