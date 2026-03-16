@@ -11,6 +11,9 @@ from services import ValuationService
 from collectors.woz_collector import create_woz_collector
 from collectors.energielabel_collector import create_energielabel_collector
 from collectors.kadaster_collector import create_kadaster_collector
+from collectors.miljoenhuizen_collector import create_miljoenhuizen_collector, MiljoenhuizenWoning
+from collectors.cbs_market_collector import create_cbs_market_collector
+from collectors.cbs_buurt_collector import create_cbs_buurt_collector, lookup_buurt_code_pdok
 from collectors.bag_collector import BagClient
 import os
 
@@ -92,6 +95,7 @@ class WaardebepalingResponse(BaseModel):
     energielabel_correctie: int
     bouwjaar_correctie: int
     woningtype_correctie: int
+    perceel_correctie: int = 0
     markt_correctie: int
 
     confidence: float
@@ -154,6 +158,22 @@ class ComparablesResponse(BaseModel):
     error: Optional[str] = None
 
 
+class MiljoenhuizenVerkoop(BaseModel):
+    """A comparable sale from Miljoenhuizen.nl."""
+    url: str
+    adres: str
+    postcode: str
+    plaats: str
+    laatste_vraagprijs: Optional[int] = None
+    verkoopdatum: Optional[str] = None
+    woonoppervlakte: Optional[int] = None
+    prijs_per_m2: Optional[float] = None
+    bouwjaar: Optional[int] = None
+    woningtype: Optional[str] = None
+    geschatte_waarde_laag: Optional[int] = None
+    geschatte_waarde_hoog: Optional[int] = None
+
+
 class AddressLookupRequest(BaseModel):
     """Request for address-based data lookup."""
     postcode: str
@@ -183,6 +203,7 @@ class EnhancedWaardebepalingResponse(BaseModel):
     # WOZ data
     woz_waarde: Optional[int] = None
     woz_peiljaar: Optional[int] = None
+    grondoppervlakte: Optional[int] = None
 
     # Energielabel (auto-fetched)
     energielabel: Optional[str] = None
@@ -205,6 +226,7 @@ class EnhancedWaardebepalingResponse(BaseModel):
     energielabel_correctie: int
     bouwjaar_correctie: int
     woningtype_correctie: int
+    perceel_correctie: int = 0
     markt_correctie: int
 
     confidence: float
@@ -213,6 +235,27 @@ class EnhancedWaardebepalingResponse(BaseModel):
     # Comparables summary
     comparables_count: int = 0
     comparables_avg_m2: Optional[float] = None
+
+    # Miljoenhuizen vergelijkbare verkopen
+    miljoenhuizen_verkopen: List[MiljoenhuizenVerkoop] = []
+    miljoenhuizen_count: int = 0
+    miljoenhuizen_avg_vraagprijs: Optional[int] = None
+
+    # Market data (CBS StatLine)
+    markt_gem_prijs: Optional[int] = None  # Regional average price
+    markt_overbiedpct: Optional[float] = None  # Current overbidding %
+    markt_verkooptijd: Optional[int] = None  # Average days to sell
+    markt_peildatum: Optional[str] = None  # Market data reference date
+
+    # Buurt data (CBS Kerncijfers)
+    buurt_code: Optional[str] = None
+    buurt_naam: Optional[str] = None
+    buurt_gem_woz: Optional[int] = None  # Average WOZ in neighborhood
+    buurt_koopwoningen_pct: Optional[float] = None  # % owner-occupied
+    buurt_gem_inkomen: Optional[int] = None  # Average income
+
+    # Data sources used
+    data_bronnen: List[str] = []
 
 
 @router.get("/", response_model=List[WoningSummary])
@@ -301,6 +344,7 @@ def get_woning_waarde(woning_id: int, db: Session = Depends(get_db)):
         energielabel_correctie=result.energielabel_correctie,
         bouwjaar_correctie=result.bouwjaar_correctie,
         woningtype_correctie=result.woningtype_correctie,
+        perceel_correctie=result.perceel_correctie,
         markt_correctie=result.markt_correctie,
         confidence=result.confidence,
         confidence_factors=result.confidence_factors,
@@ -333,6 +377,7 @@ def bereken_waarde(request: WaardebepalingRequest, db: Session = Depends(get_db)
         energielabel_correctie=result.energielabel_correctie,
         bouwjaar_correctie=result.bouwjaar_correctie,
         woningtype_correctie=result.woningtype_correctie,
+        perceel_correctie=result.perceel_correctie,
         markt_correctie=result.markt_correctie,
         confidence=result.confidence,
         confidence_factors=result.confidence_factors,
@@ -633,17 +678,71 @@ def bereken_waarde_voor_adres(
     except Exception:
         pass
 
+    # Fetch Miljoenhuizen comparable sales
+    miljoenhuizen_verkopen: List[MiljoenhuizenWoning] = []
+    try:
+        miljoenhuizen_collector = create_miljoenhuizen_collector()
+        miljoenhuizen_verkopen = miljoenhuizen_collector.get_vergelijkbare_verkopen(
+            postcode=request.postcode,
+            huisnummer=request.huisnummer,
+            woonoppervlakte=woonoppervlakte,
+            max_results=10,
+        )
+    except Exception:
+        pass
+
     # Get energielabel for valuation
     energielabel = energielabel_result.energielabel if energielabel_result else None
 
+    # Get grondoppervlakte from WOZ
+    grondoppervlakte = woz_result.oppervlakte if woz_result else None
+
+    # Fetch CBS market data for dynamic overbid percentage
+    cbs_market_data = None
+    market_overbid_pct = None
+    try:
+        cbs_collector = create_cbs_market_collector()
+        # Determine gemeente from address sources
+        gemeente_naam = None
+        if bag_data and bag_data.get("woonplaats_naam"):
+            gemeente_naam = bag_data.get("woonplaats_naam")
+        elif woz_result and woz_result.woonplaats:
+            gemeente_naam = woz_result.woonplaats
+
+        if gemeente_naam:
+            cbs_market_data = cbs_collector.get_market_data(gemeente_naam)
+            if cbs_market_data.overbiedingspercentage is not None:
+                # CBS provides as percentage, convert to decimal
+                market_overbid_pct = cbs_market_data.overbiedingspercentage / 100.0
+    except Exception:
+        pass
+
+    # Fetch CBS buurt data for neighborhood-level indicators
+    buurt_data = None
+    buurt_code = None
+    try:
+        # Look up buurt code via PDOK
+        buurt_code = lookup_buurt_code_pdok(request.postcode, request.huisnummer)
+        if buurt_code:
+            buurt_collector = create_cbs_buurt_collector()
+            buurt_data = buurt_collector.get_buurt(buurt_code)
+    except Exception:
+        pass
+
     # Calculate valuation
     service = ValuationService(db)
+
+    # Use dynamic market overbid from CBS if available
+    if market_overbid_pct is not None:
+        service.set_market_overbid(market_overbid_pct)
+
     valuation = service.estimate_value(
         woonoppervlakte=woonoppervlakte,
         energielabel=energielabel,
         bouwjaar=bouwjaar,
         woningtype=request.woningtype,
         vraagprijs=request.vraagprijs,
+        grondoppervlakte=grondoppervlakte,
     )
 
     # Build address string - prefer BAG data (most reliable)
@@ -680,6 +779,24 @@ def bereken_waarde_voor_adres(
         if request.toevoeging:
             adres += f" {request.toevoeging}"
 
+    # Build list of data sources used
+    data_bronnen = []
+    if bag_data and bag_data.get("nummeraanduiding_id"):
+        data_bronnen.append("BAG (Kadaster)")
+    if woz_result and woz_result.woz_waarde:
+        data_bronnen.append("WOZ Waardeloket")
+    if energielabel:
+        data_bronnen.append("EP-Online (RVO)")
+    if comparables_result and comparables_result.count > 0:
+        data_bronnen.append("Kadaster Transacties")
+    if cbs_market_data and (cbs_market_data.gemiddelde_prijs or cbs_market_data.overbiedingspercentage):
+        data_bronnen.append("CBS StatLine")
+    if buurt_data and buurt_data.gem_woz_waarde:
+        if "CBS Kerncijfers" not in data_bronnen:
+            data_bronnen.append("CBS Kerncijfers")
+    if miljoenhuizen_verkopen:
+        data_bronnen.append("Miljoenhuizen.nl")
+
     return EnhancedWaardebepalingResponse(
         postcode=request.postcode,
         huisnummer=request.huisnummer,
@@ -687,6 +804,7 @@ def bereken_waarde_voor_adres(
         # WOZ
         woz_waarde=woz_result.woz_waarde if woz_result else None,
         woz_peiljaar=woz_result.peiljaar if woz_result else None,
+        grondoppervlakte=grondoppervlakte,
         # Energielabel
         energielabel=energielabel,
         energielabel_bron="auto" if energielabel else "niet_gevonden",
@@ -705,12 +823,51 @@ def bereken_waarde_voor_adres(
         energielabel_correctie=valuation.energielabel_correctie,
         bouwjaar_correctie=valuation.bouwjaar_correctie,
         woningtype_correctie=valuation.woningtype_correctie,
+        perceel_correctie=valuation.perceel_correctie,
         markt_correctie=valuation.markt_correctie,
         confidence=valuation.confidence,
         confidence_factors=valuation.confidence_factors,
         # Comparables
         comparables_count=comparables_result.count if comparables_result else 0,
         comparables_avg_m2=comparables_result.avg_prijs_per_m2 if comparables_result else None,
+        # Miljoenhuizen vergelijkbare verkopen
+        miljoenhuizen_verkopen=[
+            MiljoenhuizenVerkoop(
+                url=v.url,
+                adres=v.adres,
+                postcode=v.postcode,
+                plaats=v.plaats,
+                laatste_vraagprijs=v.laatste_vraagprijs,
+                verkoopdatum=v.verkoopdatum,
+                woonoppervlakte=v.woonoppervlakte,
+                prijs_per_m2=v.prijs_per_m2,
+                bouwjaar=v.bouwjaar,
+                woningtype=v.woningtype,
+                geschatte_waarde_laag=v.geschatte_waarde_laag,
+                geschatte_waarde_hoog=v.geschatte_waarde_hoog,
+            )
+            for v in miljoenhuizen_verkopen
+        ],
+        miljoenhuizen_count=len(miljoenhuizen_verkopen),
+        miljoenhuizen_avg_vraagprijs=(
+            int(sum(v.laatste_vraagprijs for v in miljoenhuizen_verkopen if v.laatste_vraagprijs) /
+                len([v for v in miljoenhuizen_verkopen if v.laatste_vraagprijs]))
+            if miljoenhuizen_verkopen and any(v.laatste_vraagprijs for v in miljoenhuizen_verkopen)
+            else None
+        ),
+        # Market data (CBS StatLine)
+        markt_gem_prijs=cbs_market_data.gemiddelde_prijs if cbs_market_data else None,
+        markt_overbiedpct=cbs_market_data.overbiedingspercentage if cbs_market_data else None,
+        markt_verkooptijd=cbs_market_data.gemiddelde_verkooptijd if cbs_market_data else None,
+        markt_peildatum=cbs_market_data.peildatum if cbs_market_data else None,
+        # Buurt data (CBS Kerncijfers)
+        buurt_code=buurt_code,
+        buurt_naam=buurt_data.buurt_naam if buurt_data else None,
+        buurt_gem_woz=buurt_data.gem_woz_waarde if buurt_data else None,
+        buurt_koopwoningen_pct=buurt_data.koopwoningen_pct if buurt_data else None,
+        buurt_gem_inkomen=buurt_data.gem_inkomen if buurt_data else None,
+        # Data sources
+        data_bronnen=data_bronnen,
     )
 
 

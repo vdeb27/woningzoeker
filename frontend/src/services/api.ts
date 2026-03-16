@@ -22,6 +22,7 @@ export interface WaardebepalingResponse {
   energielabel_correctie: number
   bouwjaar_correctie: number
   woningtype_correctie: number
+  perceel_correctie: number
   markt_correctie: number
   confidence: number
   confidence_factors: Record<string, unknown>
@@ -100,6 +101,7 @@ export interface EnhancedWaardebepalingResponse {
   // WOZ
   woz_waarde?: number
   woz_peiljaar?: number
+  grondoppervlakte?: number
   // Energielabel (auto-fetched)
   energielabel?: string
   energielabel_bron: string
@@ -118,12 +120,26 @@ export interface EnhancedWaardebepalingResponse {
   energielabel_correctie: number
   bouwjaar_correctie: number
   woningtype_correctie: number
+  perceel_correctie: number
   markt_correctie: number
   confidence: number
   confidence_factors: Record<string, unknown>
   // Comparables
   comparables_count: number
   comparables_avg_m2?: number
+  // Market data (CBS StatLine)
+  markt_gem_prijs?: number
+  markt_overbiedpct?: number
+  markt_verkooptijd?: number
+  markt_peildatum?: string
+  // Buurt data (CBS Kerncijfers)
+  buurt_code?: string
+  buurt_naam?: string
+  buurt_gem_woz?: number
+  buurt_koopwoningen_pct?: number
+  buurt_gem_inkomen?: number
+  // Data sources
+  data_bronnen: string[]
 }
 
 export interface Woning {
