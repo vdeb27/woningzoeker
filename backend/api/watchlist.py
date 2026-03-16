@@ -50,6 +50,7 @@ class WatchlistItemResponse(WatchlistItemBase):
     # Embedded woning info
     woning_adres: Optional[str] = None
     woning_vraagprijs: Optional[int] = None
+    woning_woonoppervlakte: Optional[int] = None
     woning_status: Optional[str] = None
 
     class Config:
@@ -94,6 +95,7 @@ def list_watchlist(
             updated_at=item.updated_at,
             woning_adres=woning.adres if woning else None,
             woning_vraagprijs=woning.vraagprijs if woning else None,
+            woning_woonoppervlakte=woning.woonoppervlakte if woning else None,
             woning_status=woning.status if woning else None,
         )
         result.append(response)
@@ -125,6 +127,7 @@ def get_watchlist_item(item_id: int, db: Session = Depends(get_db)):
         updated_at=item.updated_at,
         woning_adres=woning.adres if woning else None,
         woning_vraagprijs=woning.vraagprijs if woning else None,
+        woning_woonoppervlakte=woning.woonoppervlakte if woning else None,
         woning_status=woning.status if woning else None,
     )
 
@@ -174,6 +177,7 @@ def create_watchlist_item(item: WatchlistItemCreate, db: Session = Depends(get_d
         updated_at=db_item.updated_at,
         woning_adres=woning.adres,
         woning_vraagprijs=woning.vraagprijs,
+        woning_woonoppervlakte=woning.woonoppervlakte,
         woning_status=woning.status,
     )
 
@@ -218,6 +222,7 @@ def update_watchlist_item(
         updated_at=item.updated_at,
         woning_adres=woning.adres if woning else None,
         woning_vraagprijs=woning.vraagprijs if woning else None,
+        woning_woonoppervlakte=woning.woonoppervlakte if woning else None,
         woning_status=woning.status if woning else None,
     )
 
