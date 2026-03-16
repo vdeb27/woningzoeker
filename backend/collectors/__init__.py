@@ -23,6 +23,10 @@ from collectors.leefbaarometer_collector import (
     LeefbaarometerResult,
     create_leefbaarometer_collector,
 )
+from collectors.cbs_extra_collector import (
+    CBSExtraCollector,
+    create_cbs_extra_collector,
+)
 from collectors.rivm_collector import (
     RIVMCollector,
     RIVMResult,
@@ -71,6 +75,9 @@ __all__ = [
     "LeefbaarometerCollector",
     "LeefbaarometerResult",
     "create_leefbaarometer_collector",
+    # CBS Extra (misdrijven, arbeid, SES, opleiding, bodemgebruik)
+    "CBSExtraCollector",
+    "create_cbs_extra_collector",
     # RIVM
     "RIVMCollector",
     "RIVMResult",
