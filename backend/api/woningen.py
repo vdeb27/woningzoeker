@@ -788,7 +788,7 @@ def bereken_waarde_voor_adres(
     if energielabel:
         data_bronnen.append("EP-Online (RVO)")
     if comparables_result and comparables_result.count > 0:
-        data_bronnen.append("Kadaster Transacties")
+        data_bronnen.append("OpenKadaster")
     if cbs_market_data and (cbs_market_data.gemiddelde_prijs or cbs_market_data.overbiedingspercentage):
         data_bronnen.append("CBS StatLine")
     if buurt_data and buurt_data.gem_woz_waarde:
