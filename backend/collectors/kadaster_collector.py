@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import requests
+from bs4 import BeautifulSoup
 
 
 USER_AGENTS = [
@@ -103,7 +104,7 @@ class ComparablesResult:
     min_oppervlakte: Optional[int] = None
     max_oppervlakte: Optional[int] = None
     max_years: int = 2
-    source: str = "kadaster"
+    source: str = "openkadaster"
     error: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -189,11 +190,11 @@ class KadasterCollector:
     session: Optional[requests.Session] = None
     _last_request: float = field(default=0.0, init=False, repr=False)
 
+    max_retries: int = 3
+
     # API endpoints
     PDOK_API_URL = "https://api.pdok.nl/bzk/locatieserver/search/v3_1/free"
-
-    # Note: OpenKadaster.com has limited public API
-    # Alternative is to use CBS transaction data or NVM statistics
+    OPENKADASTER_URL = "https://openkadaster.com/transactions"
     CBS_ODATA_URL = "https://opendata.cbs.nl/ODataApi/odata"
 
     def __post_init__(self) -> None:
@@ -295,6 +296,108 @@ class KadasterCollector:
         except requests.RequestException:
             return None
 
+    def _fetch_page(self, url: str, params: Optional[Dict[str, str]] = None) -> Optional[str]:
+        """
+        Fetch a page with retry logic and rate limiting.
+
+        Returns the HTML content or None on failure.
+        """
+        headers = self._get_headers()
+        headers["Accept"] = "text/html,application/xhtml+xml"
+
+        for attempt in range(self.max_retries):
+            self._rate_limit()
+            try:
+                response = self.session.get(
+                    url, params=params, headers=headers, timeout=30
+                )
+                if response.status_code == 429:
+                    wait_time = (2 ** attempt) * self.max_delay
+                    time.sleep(wait_time)
+                    continue
+                response.raise_for_status()
+                return response.text
+            except requests.RequestException:
+                if attempt == self.max_retries - 1:
+                    return None
+                time.sleep(self.max_delay)
+        return None
+
+    def _parse_openkadaster_price(self, price_text: str) -> Optional[int]:
+        """Parse price string like '€375,000.00' to integer."""
+        if not price_text:
+            return None
+        cleaned = re.sub(r"[€\s]", "", price_text)
+        # Format is €375,000.00 (comma as thousands, dot as decimal)
+        cleaned = cleaned.replace(",", "").replace(".", "")
+        # After removing both separators we have e.g. "37500000" for €375,000.00
+        # The last two digits were decimals, so divide by 100
+        try:
+            return int(cleaned) // 100
+        except (ValueError, ZeroDivisionError):
+            return None
+
+    def _parse_address(self, address_text: str) -> tuple[Optional[str], Optional[int]]:
+        """Parse address like 'Preludeweg 478' into street and house number."""
+        if not address_text:
+            return None, None
+        match = re.match(r"^(.+?)\s+(\d+)\s*.*$", address_text.strip())
+        if match:
+            return match.group(1), int(match.group(2))
+        return address_text.strip(), None
+
+    def _parse_transactions_page(self, html: str) -> List[TransactionRecord]:
+        """Parse OpenKadaster transactions page HTML into TransactionRecords."""
+        soup = BeautifulSoup(html, "html.parser")
+        table = soup.find("table", class_="table")
+        if not table:
+            return []
+
+        tbody = table.find("tbody")
+        if not tbody:
+            return []
+
+        transactions = []
+        for row in tbody.find_all("tr"):
+            cells = row.find_all("td")
+            if len(cells) < 5:
+                continue
+
+            try:
+                address_text = cells[0].get_text(strip=True)
+                postcode = cells[1].get_text(strip=True).replace(" ", "").upper()
+                city = cells[2].get_text(strip=True)
+                date_text = cells[3].get_text(strip=True)
+                price_text = cells[4].get_text(strip=True)
+
+                straat, huisnummer = self._parse_address(address_text)
+                prijs = self._parse_openkadaster_price(price_text)
+
+                if not postcode or huisnummer is None:
+                    continue
+
+                koopjaar = None
+                if date_text:
+                    try:
+                        koopjaar = int(date_text[:4])
+                    except (ValueError, IndexError):
+                        pass
+
+                transactions.append(TransactionRecord(
+                    postcode=postcode,
+                    huisnummer=huisnummer,
+                    straat=straat,
+                    woonplaats=city,
+                    transactie_datum=date_text,
+                    transactie_prijs=prijs,
+                    koopsom=prijs,
+                    koopjaar=koopjaar,
+                ))
+            except Exception:
+                continue
+
+        return transactions
+
     def _search_transactions_in_area(
         self,
         pc4: str,
@@ -303,24 +406,25 @@ class KadasterCollector:
         max_years: int = 2,
     ) -> List[TransactionRecord]:
         """
-        Search for transactions in a PC4 area.
+        Search for transactions in a PC4 area via OpenKadaster.com.
 
-        Note: This is a placeholder for actual transaction data retrieval.
-        Real implementation would need to:
-        1. Scrape OpenKadaster.com
-        2. Use paid Kadaster services
-        3. Aggregate from other sources (NVM, Funda verkocht)
-
-        For now, returns empty list - to be implemented with actual data source.
+        Scrapes the OpenKadaster search page for transactions matching
+        the given postal code area and filters by date.
         """
-        # TODO: Implement actual transaction data retrieval
-        # Options:
-        # 1. OpenKadaster.com scraping (if ToS allows)
-        # 2. Kadaster Open Data downloads
-        # 3. CBS aggregate data (no individual transactions)
-        # 4. NVM statistics (paid access)
+        # Calculate date filter
+        date_since = (datetime.now() - timedelta(days=max_years * 365)).strftime("%Y-%m-%d")
 
-        return []
+        params = {
+            "query": pc4,
+            "date_since": date_since,
+            "order_by": "date_desc",
+        }
+
+        html = self._fetch_page(self.OPENKADASTER_URL, params=params)
+        if not html:
+            return []
+
+        return self._parse_transactions_page(html)
 
     def _fetch_cbs_price_data(
         self,
@@ -401,16 +505,21 @@ class KadasterCollector:
             if cached:
                 return [TransactionRecord.from_dict(t) for t in cached.get("transactions", [])]
 
-        # Get address info first
-        addr_info = self._get_address_info(pc, huisnummer)
+        # Search OpenKadaster by postcode, then filter to this property
+        params = {
+            "query": pc,
+            "order_by": "date_desc",
+        }
 
+        html = self._fetch_page(self.OPENKADASTER_URL, params=params)
         transactions: List[TransactionRecord] = []
 
-        # TODO: Implement actual historical transaction lookup
-        # This would require:
-        # 1. Kadaster API access (paid) or
-        # 2. OpenKadaster scraping or
-        # 3. Other data source integration
+        if html:
+            all_transactions = self._parse_transactions_page(html)
+            # Filter to only this specific property
+            for t in all_transactions:
+                if t.postcode == pc and t.huisnummer == huisnummer:
+                    transactions.append(t)
 
         if use_cache and transactions:
             self._save_to_cache(cache_key, {
