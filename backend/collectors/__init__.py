@@ -13,6 +13,21 @@ from collectors.cbs_buurt_collector import (
     create_cbs_buurt_collector,
     lookup_buurt_code_pdok,
 )
+from collectors.cbs_nabijheid_collector import (
+    CBSNabijheidCollector,
+    NabijheidResult,
+    create_cbs_nabijheid_collector,
+)
+from collectors.leefbaarometer_collector import (
+    LeefbaarometerCollector,
+    LeefbaarometerResult,
+    create_leefbaarometer_collector,
+)
+from collectors.rivm_collector import (
+    RIVMCollector,
+    RIVMResult,
+    create_rivm_collector,
+)
 from collectors.woz_collector import WOZCollector, WOZResult, create_woz_collector
 from collectors.energielabel_collector import (
     EnergielabelCollector,
@@ -48,6 +63,18 @@ __all__ = [
     "BuurtData",
     "create_cbs_buurt_collector",
     "lookup_buurt_code_pdok",
+    # CBS Nabijheid
+    "CBSNabijheidCollector",
+    "NabijheidResult",
+    "create_cbs_nabijheid_collector",
+    # Leefbaarometer
+    "LeefbaarometerCollector",
+    "LeefbaarometerResult",
+    "create_leefbaarometer_collector",
+    # RIVM
+    "RIVMCollector",
+    "RIVMResult",
+    "create_rivm_collector",
     # WOZ
     "WOZCollector",
     "WOZResult",

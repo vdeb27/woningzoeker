@@ -2,13 +2,8 @@
 CBS Buurt (Neighborhood) Data Collector.
 
 Fetches neighborhood-level statistics from CBS "Kerncijfers wijken en buurten" (85618NED).
-Provides housing indicators at buurt level for more accurate valuations.
-
-Key indicators:
-- Gemiddelde WOZ-waarde: Average property valuation per neighborhood
-- Koopwoningen: Percentage owner-occupied homes
-- Bouwjaar: Building age distribution
-- Inkomen: Average income per resident
+Extended to ~50 indicators across categories: bevolking, woningen, inkomen, energie,
+voorzieningen, motorvoertuigen.
 """
 
 from __future__ import annotations
@@ -33,15 +28,78 @@ CACHE_DURATION_SECONDS = 30 * 24 * 60 * 60  # 30 days (yearly dataset)
 # Target municipalities
 TARGET_MUNICIPALITIES = ["0518", "1916", "0603"]  # Den Haag, Leidschendam-Voorburg, Rijswijk
 
-# CBS column names for housing indicators
+# CBS column names for housing indicators - extended to ~50
+# Organized by category for clarity
 HOUSING_COLUMNS = {
+    # === Bevolking ===
+    "inwoners": "AantalInwoners_5",
+    "mannen": "Mannen_6",
+    "vrouwen": "Vrouwen_7",
+    "leeftijd_0_14": "k_0Tot15Jaar_8",
+    "leeftijd_15_24": "k_15Tot25Jaar_9",
+    "leeftijd_25_44": "k_25Tot45Jaar_10",
+    "leeftijd_45_64": "k_45Tot65Jaar_11",
+    "leeftijd_65_plus": "k_65JaarOfOuder_12",
+    "ongehuwd": "Ongehuwd_13",
+    "gehuwd": "Gehuwd_14",
+    "gescheiden": "Gescheiden_15",
+    "verweduwd": "Verweduwd_16",
+    "bevolkingsdichtheid": "Bevolkingsdichtheid_33",
+    "huishoudens_totaal": "HuishoudensTotaal_28",
+    "eenpersoons_huishoudens": "Eenpersoonshuishoudens_29",
+    "huishoudens_zonder_kinderen": "HuishoudensZonderKinderen_30",
+    "huishoudens_met_kinderen": "HuishoudensMetKinderen_31",
+    "gem_huishoudensgrootte": "GemiddeldeHuishoudensgrootte_32",
+
+    # === Woningen ===
+    "woningvoorraad": "Woningvoorraad_34",
     "woz_waarde": "GemiddeldeWOZWaardeVanWoningen_35",
     "koopwoningen_pct": "Koopwoningen_40",
     "huurwoningen_pct": "HuurwoningenTotaal_41",
+    "huur_corporatie_pct": "InBezitWoningcorporatie_42",
+    "huur_overig_pct": "InBezitOverigeVerhuurders_43",
+    "eigendom_onbekend_pct": "EigendomOnbekend_44",
     "bouwjaar_voor_2000_pct": "BouwjaarVoor2000_53",
     "bouwjaar_vanaf_2000_pct": "BouwjaarVanaf2000_54",
+
+    # === Energie ===
+    "gem_gasverbruik": "GemiddeldAardgasverbruikTotaal_27",
+    "gem_elektraverbruik": "GemiddeldeElektriciteitsleveringTotaal_23",
+
+    # === Inkomen ===
     "gem_inkomen": "GemiddeldInkomenPerInwoner_66",
+    "gem_inkomen_ontvanger": "GemiddeldInkomenPerInkomensontvwordt_67",
     "huishoudens_laag_inkomen_pct": "HuishoudensMetEenLaagInkomen_70",
+    "huishoudens_hoog_inkomen_pct": "HuishoudensMetEenHoogInkomen_71",
+    "huishoudens_onder_of_rond_sociaal_minimum": "HuishOnderOfRondSociaalMinimum_72",
+
+    # === Uitkeringen ===
+    "bijstandsuitkeringen_per_1000": "PersonenPerSoortUitkBijwordt_75",
+    "ao_uitkeringen_per_1000": "PersonenPerSoortUitkAO_76",
+    "ww_uitkeringen_per_1000": "PersonenPerSoortUitkWW_77",
+    "aow_uitkeringen_per_1000": "PersonenPerSoortUitkAOW_78",
+
+    # === Motorvoertuigen ===
+    "personenautos_totaal": "PersonenautoSTotaal_109",
+    "personenautos_per_huishouden": "PersonenautoSPerHuishouden_110",
+    "personenautos_brandstof_benzine": "Personenautos_111",  # benzine
+    "personenautos_brandstof_overig": "PersonenautoSOverigeBrandstof_112",
+
+    # === Voorzieningen (afstanden in km) ===
+    "afstand_huisartsenpraktijk": "AfstandTotHuisartsenpraktijk_100",
+    "afstand_ziekenhuis": "AfstandTotZiekenhuis_102",
+    "afstand_basisonderwijs": "AfstandTotSchoolBasisonderwijs_97",
+    "afstand_voortgezet_onderwijs": "AfstandTotSchoolVoortgezetOndwordt_98",
+    "afstand_kinderdagverblijf": "AfstandTotKinderdagverblijf_96",
+    "afstand_grote_supermarkt": "AfstandTotGroteSupermarkt_92",
+    "afstand_cafe": "AfstandTotCafe_89",
+    "afstand_restaurant": "AfstandTotRestaurant_95",
+    "afstand_bioscoop": "AfstandTotBioscoop_87",
+    "afstand_zwembad": "AfstandTotZwembad_106",
+    "afstand_sportterrein": "AfstandTotSportterrein_105",
+    "afstand_bibliotheek": "AfstandTotBibliotheek_86",
+    "afstand_oprit_hoofdverkeersweg": "AfstandTotOpritHoofdverkeersweg_93",
+    "afstand_treinstation": "AfstandTotBelangrijkOverstapstation_88",
 }
 
 
@@ -68,6 +126,9 @@ class BuurtData:
     # Income indicators
     gem_inkomen: Optional[int] = None  # x 1000 euro
     huishoudens_laag_inkomen_pct: Optional[float] = None
+
+    # Extended indicators (all CBS data beyond core fields)
+    indicatoren: Dict[str, Any] = field(default_factory=dict)
 
     bron: str = "CBS Kerncijfers wijken en buurten"
 
@@ -135,6 +196,7 @@ class CBSBuurtCollector:
                     "bouwjaar_vanaf_2000_pct": b.bouwjaar_vanaf_2000_pct,
                     "gem_inkomen": b.gem_inkomen,
                     "huishoudens_laag_inkomen_pct": b.huishoudens_laag_inkomen_pct,
+                    "indicatoren": b.indicatoren,
                     "bron": b.bron,
                 }
                 for code, b in self._buurt_data.items()
@@ -215,6 +277,22 @@ class CBSBuurtCollector:
                 except (ValueError, TypeError):
                     pass
 
+            # Parse all extended indicators
+            indicatoren = {}
+            for indicator_key, cbs_column in HOUSING_COLUMNS.items():
+                # Skip core fields already handled above
+                if indicator_key in ("woz_waarde", "gem_inkomen", "koopwoningen_pct",
+                                     "huurwoningen_pct", "bouwjaar_voor_2000_pct",
+                                     "bouwjaar_vanaf_2000_pct", "huishoudens_laag_inkomen_pct"):
+                    continue
+
+                raw_val = record.get(cbs_column)
+                if raw_val is not None:
+                    try:
+                        indicatoren[indicator_key] = float(raw_val)
+                    except (ValueError, TypeError):
+                        pass
+
             buurt = BuurtData(
                 buurt_code=buurt_code,
                 buurt_naam=str(record.get("WijkenEnBuurten", "")).strip(),
@@ -227,6 +305,7 @@ class CBSBuurtCollector:
                 bouwjaar_vanaf_2000_pct=parse_pct("bouwjaar_vanaf_2000_pct"),
                 gem_inkomen=gem_inkomen,
                 huishoudens_laag_inkomen_pct=parse_pct("huishoudens_laag_inkomen_pct"),
+                indicatoren=indicatoren,
             )
 
             self._buurt_data[buurt_code] = buurt
