@@ -23,8 +23,9 @@ from typing import Any, Dict, List, Optional
 import requests
 
 
-# Leefbaarometer WFS endpoint (PDOK)
-LBM_WFS_URL = "https://service.pdok.nl/lbm/leefbaarometer/wfs/v1_0"
+# Leefbaarometer WFS endpoint (geo.leefbaarometer.nl)
+LBM_WFS_URL = "https://geo.leefbaarometer.nl/lbm3/ows"
+LBM_LAYER = "lbm3:buurtscore24"
 
 # Cache settings
 CACHE_DIR = Path(__file__).parent.parent.parent / "data" / "cache" / "leefbaarometer"
@@ -107,15 +108,19 @@ class LeefbaarometerCollector:
             pass
 
     def _fetch_from_wfs(self) -> None:
-        """Fetch Leefbaarometer data from PDOK WFS."""
+        """Fetch Leefbaarometer data from WFS.
+
+        Uses the buurtscore24 layer from geo.leefbaarometer.nl which
+        contains the total score and all 5 dimension scores per buurt.
+        """
         for muni_code in TARGET_MUNICIPALITIES:
-            cql_filter = f"gemeentecode='{muni_code}'"
+            cql_filter = f"id LIKE 'BU{muni_code}%'"
 
             params = {
                 "service": "WFS",
-                "version": "2.0.0",
+                "version": "1.0.0",
                 "request": "GetFeature",
-                "typeName": "leefbaarometer:indicatorscorebuurt",
+                "typeName": LBM_LAYER,
                 "outputFormat": "application/json",
                 "CQL_FILTER": cql_filter,
             }
@@ -127,20 +132,23 @@ class LeefbaarometerCollector:
 
                 for feature in data.get("features", []):
                     props = feature.get("properties", {})
-                    buurt_code = props.get("buurtcode", "")
+                    buurt_code = props.get("id", "")
                     if not buurt_code:
                         continue
 
                     if not buurt_code.startswith("BU"):
                         buurt_code = f"BU{buurt_code}"
 
+                    # buurtscore24 properties:
+                    # afw = total score, fys = fysiek, onv = onveiligheid,
+                    # soc = sociaal, vrz = voorzieningen, won = woningen
                     result = LeefbaarometerResult(
                         buurt_code=buurt_code,
-                        lbm_score=_safe_float(props.get("lbm")),
+                        lbm_score=_safe_float(props.get("afw")),
                         fysieke_omgeving=_safe_float(props.get("fys")),
                         voorzieningen=_safe_float(props.get("vrz")),
-                        veiligheid=_safe_float(props.get("vei")),
-                        bevolkingssamenstelling=_safe_float(props.get("bev")),
+                        veiligheid=_safe_float(props.get("onv")),
+                        bevolkingssamenstelling=_safe_float(props.get("soc")),
                         woningvoorraad=_safe_float(props.get("won")),
                     )
                     self._data[buurt_code] = result
