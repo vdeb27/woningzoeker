@@ -28,6 +28,7 @@ from collectors.cbs_buurt_collector import CBSBuurtCollector, HOUSING_COLUMNS
 from collectors.leefbaarometer_collector import create_leefbaarometer_collector
 from collectors.cbs_nabijheid_collector import create_cbs_nabijheid_collector
 from collectors.rivm_collector import create_rivm_collector
+from collectors.cbs_extra_collector import create_cbs_extra_collector
 from services.scoring import ScoringService
 
 
@@ -56,13 +57,20 @@ def fetch_all_data(skip_rivm: bool = False):
         print(f"  CBS Nabijheid laden mislukt: {e}")
         nabijheid_data = {}
 
+    print("\n=== CBS Extra (misdrijven, arbeid, SES, opleiding, bodem) laden ===")
+    try:
+        extra = create_cbs_extra_collector()
+        extra_data = extra.get_all_buurten()
+        print(f"  {len(extra_data)} buurten met extra CBS data")
+    except Exception as e:
+        print(f"  CBS Extra laden mislukt: {e}")
+        extra_data = {}
+
     rivm_data = {}
     if not skip_rivm:
         print("\n=== RIVM Atlas laden ===")
         try:
             rivm = create_rivm_collector()
-            # RIVM requires centroids - we'll calculate from existing geometrie
-            # For now, load from cache if available
             rivm_data = rivm.get_all()
             print(f"  {len(rivm_data)} buurten met RIVM data (uit cache)")
             if not rivm_data:
@@ -72,12 +80,13 @@ def fetch_all_data(skip_rivm: bool = False):
     else:
         print("\n=== RIVM overgeslagen (--skip-rivm) ===")
 
-    return buurten, lbm_data, nabijheid_data, rivm_data
+    return buurten, lbm_data, nabijheid_data, rivm_data, extra_data
 
 
-def merge_and_score(buurten, lbm_data, nabijheid_data, rivm_data):
+def merge_and_score(buurten, lbm_data, nabijheid_data, rivm_data, extra_data=None):
     """Merge all data sources and calculate scores."""
     print("\n=== Data samenvoegen ===")
+    extra_data = extra_data or {}
 
     records = []
     for buurt in buurten:
@@ -105,7 +114,6 @@ def merge_and_score(buurten, lbm_data, nabijheid_data, rivm_data):
             record["leefbaarometer_veiligheid"] = lbm.veiligheid
             record["leefbaarometer_bevolking"] = lbm.bevolkingssamenstelling
             record["leefbaarometer_woningen"] = lbm.woningvoorraad
-            # Also add to indicatoren
             indicatoren["leefbaarometer_veiligheid"] = lbm.veiligheid
             indicatoren["leefbaarometer_fysiek"] = lbm.fysieke_omgeving
 
@@ -126,6 +134,12 @@ def merge_and_score(buurten, lbm_data, nabijheid_data, rivm_data):
                 indicatoren["pm10_concentratie"] = rivm.pm10_concentratie
             if rivm.geluid_weg_lden is not None:
                 indicatoren["geluid_weg_lden"] = rivm.geluid_weg_lden
+
+        # Merge CBS Extra (misdrijven, arbeid, SES, opleiding, bodemgebruik)
+        extra = extra_data.get(buurt.buurt_code)
+        if extra:
+            for key, val in extra.items():
+                indicatoren[key] = val
 
         record["indicatoren"] = indicatoren
 
@@ -269,17 +283,17 @@ def main():
         import shutil
         cache_dirs = [
             Path(__file__).parent.parent / "data" / "cache" / d
-            for d in ["leefbaarometer", "cbs_nabijheid", "rivm"]
+            for d in ["leefbaarometer", "cbs_nabijheid", "rivm", "cbs_extra"]
         ]
         for d in cache_dirs:
             if d.exists():
                 shutil.rmtree(d)
                 print(f"Cache verwijderd: {d}")
 
-    buurten, lbm_data, nabijheid_data, rivm_data = fetch_all_data(
+    buurten, lbm_data, nabijheid_data, rivm_data, extra_data = fetch_all_data(
         skip_rivm=args.skip_rivm
     )
-    scored = merge_and_score(buurten, lbm_data, nabijheid_data, rivm_data)
+    scored = merge_and_score(buurten, lbm_data, nabijheid_data, rivm_data, extra_data)
     write_to_database(scored)
 
     print("\n=== Klaar! ===")
