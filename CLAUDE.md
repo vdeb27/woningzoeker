@@ -61,15 +61,45 @@ npm run dev
 - EP-Online (RVO energielabels)
 - CBS Kerncijfers (buurt-niveau data)
 - Miljoenhuizen.nl (historische vraagprijzen, scraping)
+- OpenKadaster.com (transactieprijzen, scraping)
+
+## Data Storage
+
+- **SQLite database** (`data/woningzoeker.db`) — persistente data: woningen, buurten, transacties, watchlist
+- **File-based cache** (`data/cache/`) — tijdelijke API-responses (WOZ, energielabel, etc.), verloopt na X dagen
+- Transactiedata (OpenKadaster, Miljoenhuizen) → `transacties` tabel (permanent, niet cache)
+- Bulk download: `cd backend && python bulk_download.py`
 
 ## Development Workflow
+
+### Parallel werken met git worktrees
+
+Bij parallel werken aan meerdere issues (bijv. meerdere Claude-sessies tegelijk)
+**altijd git worktrees gebruiken**. Nooit van branch wisselen in een directory waar
+een andere sessie actief is — dat veroorzaakt bestandsconflicten en dataverlies.
+
+```bash
+# Nieuwe worktree aanmaken voor een issue
+git worktree add ../woningzoeker-issue-X feature/issue-x
+
+# Werken in de worktree
+cd ../woningzoeker-issue-X/backend
+source venv/bin/activate  # venv moet per worktree bestaan
+
+# Opruimen na merge
+git worktree remove ../woningzoeker-issue-X
+```
+
+**Let op:** de SQLite database (`data/woningzoeker.db`) en cache (`data/cache/`) worden
+gedeeld tussen worktrees (zelfde git repo). Vermijd gelijktijdig schrijven naar de DB
+vanuit meerdere sessies.
 
 ### Feature Development
 
 1. **Check GitHub issues** voor openstaande taken:
    ```bash
    gh issue list
-   gh issue view <nummer>
+   gh issue view <nummer> --json title,body,labels
    ```
 
 2. **Maak feature branch** gebaseerd op issue:
@@ -173,6 +203,10 @@ def create_<naam>_collector(cache_dir: Optional[Path] = None) -> <Naam>Collector
 
 ## Recent Completed
 
+- Issue #2: OpenKadaster transactiedata integratie
+  - Scraping van openkadaster.com (community-gedreven transactiedataset)
+  - Transacties tabel in SQLite voor persistente opslag
+  - Bulk download script (`bulk_download.py`)
 - Issue #22: Extra databronnen verkoopprijzen integreren
   - CBS Market Collector (gemiddelde prijzen, overbiedingspercentage)
   - CBS Buurt Collector (buurt-niveau WOZ, inkomen)
