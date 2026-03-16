@@ -297,6 +297,14 @@ export default function WaardebepalingPage() {
     woningtype: undefined,
   })
 
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = (waardeMidden: number) => {
+    navigator.clipboard.writeText(String(Math.round(waardeMidden)))
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
   // Simple mode mutation
   const simpleMutation = useMutation({
     mutationFn: berekenWaarde,
@@ -733,8 +741,16 @@ export default function WaardebepalingPage() {
                 </div>
                 <div className="mt-4 bg-gray-50 rounded-lg p-4">
                   <div className="text-sm text-gray-600">Aanbevolen biedingsbereik</div>
-                  <div className="text-xl font-semibold">
-                    {formatPrijs(addressResult.bied_range_laag)} - {formatPrijs(addressResult.bied_range_hoog)}
+                  <div className="flex items-center justify-between">
+                    <div className="text-xl font-semibold">
+                      {formatPrijs(addressResult.bied_range_laag)} - {formatPrijs(addressResult.bied_range_hoog)}
+                    </div>
+                    <button
+                      onClick={() => handleCopy(addressResult.waarde_midden)}
+                      className="px-3 py-1 text-sm font-medium rounded-lg bg-primary-100 text-primary-700 hover:bg-primary-200 transition-colors"
+                    >
+                      {copied ? 'Gekopieerd!' : 'Kopieer bedrag'}
+                    </button>
                   </div>
                 </div>
               </div>
@@ -861,8 +877,16 @@ export default function WaardebepalingPage() {
                 </div>
                 <div className="mt-4 bg-gray-50 rounded-lg p-4">
                   <div className="text-sm text-gray-600">Aanbevolen biedingsbereik</div>
-                  <div className="text-xl font-semibold">
-                    {formatPrijs(simpleResult.bied_range_laag)} - {formatPrijs(simpleResult.bied_range_hoog)}
+                  <div className="flex items-center justify-between">
+                    <div className="text-xl font-semibold">
+                      {formatPrijs(simpleResult.bied_range_laag)} - {formatPrijs(simpleResult.bied_range_hoog)}
+                    </div>
+                    <button
+                      onClick={() => handleCopy(simpleResult.waarde_midden)}
+                      className="px-3 py-1 text-sm font-medium rounded-lg bg-primary-100 text-primary-700 hover:bg-primary-200 transition-colors"
+                    >
+                      {copied ? 'Gekopieerd!' : 'Kopieer bedrag'}
+                    </button>
                   </div>
                 </div>
               </div>
