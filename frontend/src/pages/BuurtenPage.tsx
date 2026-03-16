@@ -1,6 +1,8 @@
-import { useState } from 'react'
+import { useState, lazy, Suspense } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchBuurten, Buurt, formatPrijs } from '../services/api'
+
+const BuurtMap = lazy(() => import('../components/BuurtMap'))
 
 export function ScoreBar({ score, label }: { score?: number; label: string }) {
   if (score === undefined || score === null) {
@@ -130,6 +132,11 @@ export default function BuurtenPage() {
           </div>
         </div>
       </div>
+
+      {/* Kaart */}
+      <Suspense fallback={<div className="h-[400px] bg-gray-100 rounded-lg animate-pulse mb-6" />}>
+        <BuurtMap gemeente={gemeente || undefined} minScore={minScore} />
+      </Suspense>
 
       {/* Results */}
       {isLoading && (

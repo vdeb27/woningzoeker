@@ -1,6 +1,7 @@
 """Neighborhood (buurt) API routes."""
 
-from typing import List, Optional
+import json
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -55,6 +56,48 @@ class BuurtDetail(BuurtBase):
 class BuurtVergelijk(BaseModel):
     """Schema for neighborhood comparison."""
     buurten: List[BuurtDetail]
+
+
+@router.get("/geojson")
+def get_buurten_geojson(
+    gemeente: Optional[str] = Query(None, description="Filter by municipality"),
+    min_score: Optional[float] = Query(None, ge=0, le=1, description="Minimum score"),
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Get buurt boundaries as GeoJSON FeatureCollection."""
+    query = db.query(Buurt).filter(Buurt.geometrie.isnot(None))
+
+    if gemeente:
+        query = query.filter(Buurt.gemeente_naam.ilike(f"%{gemeente}%"))
+
+    if min_score is not None:
+        query = query.filter(Buurt.score_totaal >= min_score)
+
+    buurten = query.all()
+
+    features = []
+    for buurt in buurten:
+        geometry = buurt.geometrie
+        if isinstance(geometry, str):
+            geometry = json.loads(geometry)
+
+        features.append({
+            "type": "Feature",
+            "geometry": geometry,
+            "properties": {
+                "code": buurt.code,
+                "naam": buurt.naam,
+                "gemeente_naam": buurt.gemeente_naam,
+                "score_totaal": buurt.score_totaal,
+                "median_vraagprijs": buurt.median_vraagprijs,
+                "aantal_te_koop": buurt.aantal_te_koop,
+            },
+        })
+
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+    }
 
 
 @router.get("/", response_model=List[BuurtSummary])
