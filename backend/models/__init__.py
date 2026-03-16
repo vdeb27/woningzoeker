@@ -5,6 +5,7 @@ from models.buurt import Buurt
 from models.woning import Woning
 from models.watchlist import WatchlistItem
 from models.prijshistorie import Prijshistorie
+from models.transactie import Transactie
 
 __all__ = [
     "Base",
@@ -15,4 +16,5 @@ __all__ = [
     "Woning",
     "WatchlistItem",
     "Prijshistorie",
+    "Transactie",
 ]
