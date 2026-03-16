@@ -17,7 +17,6 @@ import sys
 from pathlib import Path
 
 import pandas as pd
-import requests
 from sqlalchemy import text
 
 # Ensure backend is on path
@@ -124,17 +123,13 @@ def merge_and_score(buurten, lbm_data, nabijheid_data, rivm_data, extra_data=Non
             for key, val in nab.afstanden.items():
                 indicatoren[key] = val
 
-        # Merge RIVM
+        # Merge RIVM (geluidhinder, slaapverstoring, tevredenheid)
         rivm = rivm_data.get(buurt.buurt_code)
         if rivm:
-            if rivm.no2_concentratie is not None:
-                indicatoren["no2_concentratie"] = rivm.no2_concentratie
-            if rivm.pm25_concentratie is not None:
-                indicatoren["pm25_concentratie"] = rivm.pm25_concentratie
-            if rivm.pm10_concentratie is not None:
-                indicatoren["pm10_concentratie"] = rivm.pm10_concentratie
-            if rivm.geluid_weg_lden is not None:
-                indicatoren["geluid_weg_lden"] = rivm.geluid_weg_lden
+            rivm_dict = rivm.to_dict()
+            for key, val in rivm_dict.items():
+                if key != "buurt_code" and val is not None:
+                    indicatoren[key] = val
 
         # Merge CBS Extra (misdrijven, arbeid, SES, opleiding, bodemgebruik)
         extra = extra_data.get(buurt.buurt_code)
@@ -274,92 +269,9 @@ def _safe_int(val) -> int | None:
         return None
 
 
-def fetch_rivm_fresh():
-    """Fetch RIVM data for all target buurten using centroids from PDOK WFS."""
-    print("\n=== RIVM Atlas ophalen (vers) ===")
-    print("  Buurt centroids ophalen via PDOK WFS...")
-
-    from collectors.cbs_buurt_collector import TARGET_MUNICIPALITIES
-
-    centroids = {}
-    for muni_code in TARGET_MUNICIPALITIES:
-        try:
-            url = "https://service.pdok.nl/cbs/wijkenbuurten/2023/wfs/v1_0"
-            ogc_filter = (
-                '<Filter xmlns="http://www.opengis.net/ogc">'
-                '<PropertyIsLike wildCard="*" singleChar="." escapeChar="!">'
-                '<PropertyName>buurtcode</PropertyName>'
-                f'<Literal>BU{muni_code}*</Literal>'
-                '</PropertyIsLike>'
-                '</Filter>'
-            )
-            params = {
-                "service": "WFS",
-                "version": "2.0.0",
-                "request": "GetFeature",
-                "typeName": "wijkenbuurten:buurten",
-                "outputFormat": "application/json",
-                "filter": ogc_filter,
-                "propertyName": "buurtcode,geom",
-            }
-            resp = requests.get(url, params=params, timeout=120)
-            resp.raise_for_status()
-            data = resp.json()
-
-            for feature in data.get("features", []):
-                code = feature.get("properties", {}).get("buurtcode", "")
-                geom = feature.get("geometry")
-                if code and geom:
-                    # Calculate centroid from geometry
-                    coords = _extract_centroid(geom)
-                    if coords:
-                        centroids[code] = coords
-
-            print(f"  {muni_code}: {sum(1 for c in centroids if c.startswith(f'BU{muni_code}'))} buurten")
-        except Exception as e:
-            print(f"  Fout bij {muni_code}: {e}")
-
-    print(f"  Totaal: {len(centroids)} centroids")
-
-    if centroids:
-        rivm = create_rivm_collector()
-        print(f"  RIVM data ophalen voor {len(centroids)} buurten (dit duurt lang)...")
-        rivm.fetch_for_centroids(centroids)
-        print(f"  Klaar: {len(rivm.get_all())} buurten met RIVM data")
-
-
-def _extract_centroid(geom: dict) -> tuple | None:
-    """Calculate approximate centroid from GeoJSON geometry."""
-    gtype = geom.get("type", "")
-    coords = geom.get("coordinates", [])
-
-    def avg_coords(coord_list):
-        """Average all coordinate pairs in a nested list."""
-        flat = []
-        _flatten_coords(coord_list, flat)
-        if not flat:
-            return None
-        avg_lon = sum(c[0] for c in flat) / len(flat)
-        avg_lat = sum(c[1] for c in flat) / len(flat)
-        return (avg_lat, avg_lon)
-
-    def _flatten_coords(nested, result):
-        if not nested:
-            return
-        if isinstance(nested[0], (int, float)):
-            result.append(nested)
-        else:
-            for item in nested:
-                _flatten_coords(item, result)
-
-    return avg_coords(coords)
-
-
 def main():
     parser = argparse.ArgumentParser(description="Bulk download buurtdata")
     parser.add_argument("--skip-rivm", action="store_true", help="Skip RIVM Atlas data")
-    parser.add_argument("--fetch-rivm", action="store_true",
-                        help="Fetch fresh RIVM data (slow, uses WMS per buurt)")
     parser.add_argument("--clear-cache", action="store_true", help="Clear cache first")
     args = parser.parse_args()
 
@@ -373,9 +285,6 @@ def main():
             if d.exists():
                 shutil.rmtree(d)
                 print(f"Cache verwijderd: {d}")
-
-    if args.fetch_rivm:
-        fetch_rivm_fresh()
 
     buurten, lbm_data, nabijheid_data, rivm_data, extra_data = fetch_all_data(
         skip_rivm=args.skip_rivm
