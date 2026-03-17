@@ -39,6 +39,8 @@ categories:
       - afstand_zwembad
       - afstand_bibliotheek
       - afstand_park
+      - schoolkwaliteit_po
+      - scholen_vo_nabij
     color: "#22c55e"
     weight: 0.18
 
@@ -212,6 +214,24 @@ indicators:
     label: Afstand park
     unit: km
     description: Afstand tot dichtstbijzijnde park of plantsoen
+
+  schoolkwaliteit_po:
+    column: gem_advies_havo_vwo_pct
+    higher_is_better: true
+    weight: 0.02
+    category: voorzieningen
+    label: Schoolkwaliteit basisonderwijs
+    unit: percentage
+    description: Gem. % leerlingen met HAVO/VWO advies bij nabije basisscholen
+
+  scholen_vo_nabij:
+    column: scholen_vo_binnen_2km
+    higher_is_better: true
+    weight: 0.01
+    category: voorzieningen
+    label: Middelbare scholen nabij
+    unit: aantal
+    description: Aantal middelbare scholen binnen 2 km
 
   # === Woningkwaliteit ===
   woz_value:
