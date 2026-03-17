@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { MapContainer, TileLayer, Marker, Popup, CircleMarker } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Popup, CircleMarker, Polyline } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import {
@@ -8,6 +8,7 @@ import {
   VoorzieningenResponse,
   VoorzieningItem,
   CBSAfstand,
+  FietsafstandItem,
 } from '../services/api'
 
 // Fix default marker icons for Vite bundler
@@ -165,14 +166,54 @@ function OSMLocatiesSection({ voorzieningen }: { voorzieningen: VoorzieningItem[
   )
 }
 
+function fietsKleur(min: number): string {
+  if (min <= 15) return 'text-green-700 bg-green-100'
+  if (min <= 30) return 'text-yellow-700 bg-yellow-100'
+  return 'text-red-700 bg-red-100'
+}
+
+const ROUTE_COLORS = ['#2563eb', '#dc2626', '#059669', '#d97706']
+
+function FietsafstandSection({ fietsafstanden }: { fietsafstanden: FietsafstandItem[] }) {
+  if (fietsafstanden.length === 0) return null
+
+  return (
+    <div className="space-y-2">
+      <h4 className="text-sm font-medium text-gray-700">{'\u{1F6B2}'} Fietsafstand werklocaties</h4>
+      <div className="bg-blue-50 rounded-lg p-3 space-y-2">
+        {fietsafstanden.map((item, idx) => (
+          <div key={idx} className="flex justify-between items-center text-sm">
+            <div className="flex items-center gap-2">
+              <span
+                className="w-3 h-3 rounded-full inline-block"
+                style={{ backgroundColor: ROUTE_COLORS[idx % ROUTE_COLORS.length] }}
+              />
+              <span className="text-gray-700">{item.dest_naam}</span>
+            </div>
+            {item.error ? (
+              <span className="text-xs text-gray-400">{item.error}</span>
+            ) : (
+              <span className={`px-2 py-0.5 rounded text-xs font-medium ${fietsKleur(item.reistijd_min)}`}>
+                {item.afstand_km} km &middot; {item.reistijd_min} min
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function VoorzieningenKaart({ data }: { data: VoorzieningenResponse }) {
-  if (data.voorzieningen.length === 0) return null
+  const hasVoorzieningen = data.voorzieningen.length > 0
+  const hasRoutes = data.fietsafstanden?.some(f => f.geometry && !f.error)
+  if (!hasVoorzieningen && !hasRoutes) return null
 
   return (
     <div className="rounded-lg overflow-hidden border border-gray-200" style={{ height: 300 }}>
       <MapContainer
         center={[data.lat, data.lng]}
-        zoom={15}
+        zoom={hasRoutes ? 13 : 15}
         style={{ height: '100%', width: '100%' }}
         scrollWheelZoom={false}
       >
@@ -203,6 +244,25 @@ function VoorzieningenKaart({ data }: { data: VoorzieningenResponse }) {
             </Popup>
           </CircleMarker>
         ))}
+        {/* Cycling route polylines */}
+        {data.fietsafstanden?.map((route, idx) => {
+          if (!route.geometry || route.error) return null
+          // ORS geometry is [[lng, lat], ...], Leaflet needs [lat, lng]
+          const positions = route.geometry.map(
+            (coord: number[]) => [coord[1], coord[0]] as [number, number]
+          )
+          return (
+            <Polyline
+              key={`route-${idx}`}
+              positions={positions}
+              pathOptions={{
+                color: ROUTE_COLORS[idx % ROUTE_COLORS.length],
+                weight: 4,
+                opacity: 0.8,
+              }}
+            />
+          )
+        })}
       </MapContainer>
     </div>
   )
@@ -260,6 +320,9 @@ export default function VoorzieningenPanel({ postcode, huisnummer }: Voorziening
         </div>
       </div>
 
+      {/* Fietsafstand werklocaties */}
+      <FietsafstandSection fietsafstanden={data.fietsafstanden || []} />
+
       {/* CBS distances by category */}
       <CBSAfstandenSection afstanden={data.cbs_afstanden} />
 
@@ -270,7 +333,7 @@ export default function VoorzieningenPanel({ postcode, huisnummer }: Voorziening
       <VoorzieningenKaart data={data} />
 
       <p className="text-xs text-gray-400">
-        Bronnen: CBS Nabijheid voorzieningen, OpenStreetMap. Afstanden zijn hemelsbreed.
+        Bronnen: CBS Nabijheid voorzieningen, OpenStreetMap, OpenRouteService. Afstanden zijn hemelsbreed (CBS) of fietsroute (ORS).
       </p>
     </div>
   )

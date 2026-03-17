@@ -62,6 +62,11 @@ from collectors.duo_school_collector import (
     SchoolInfo,
     create_duo_school_collector,
 )
+from collectors.cycling_collector import (
+    CyclingCollector,
+    CyclingRoute,
+    create_cycling_collector,
+)
 
 __all__ = [
     # BAG
@@ -122,4 +127,8 @@ __all__ = [
     "DUOSchoolCollector",
     "SchoolInfo",
     "create_duo_school_collector",
+    # Cycling (OpenRouteService)
+    "CyclingCollector",
+    "CyclingRoute",
+    "create_cycling_collector",
 ]
