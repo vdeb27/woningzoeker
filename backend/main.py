@@ -18,9 +18,9 @@ logging.basicConfig(
 env_path = Path(__file__).parent / ".env"
 load_dotenv(env_path)
 
-from api import buurten_router, woningen_router, watchlist_router, markt_router
+from api import buurten_router, woningen_router, watchlist_router, markt_router, scholen_router
 from models.database import init_db
-from models import Buurt, Woning, WatchlistItem, Prijshistorie  # noqa: F401 - ensure models are loaded
+from models import Buurt, Woning, WatchlistItem, Prijshistorie, School  # noqa: F401 - ensure models are loaded
 
 
 @asynccontextmanager
@@ -55,6 +55,7 @@ app.include_router(buurten_router)
 app.include_router(woningen_router)
 app.include_router(watchlist_router)
 app.include_router(markt_router)
+app.include_router(scholen_router)
 
 
 @app.get("/")
@@ -69,6 +70,7 @@ def root():
             "woningen": "/api/woningen",
             "watchlist": "/api/watchlist",
             "markt": "/api/markt",
+            "scholen": "/api/scholen",
         },
     }
 
