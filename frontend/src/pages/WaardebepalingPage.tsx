@@ -7,6 +7,7 @@ import {
   formatPrijs,
   formatM2Prijs,
 } from '../services/api'
+import VoorzieningenPanel from '../components/VoorzieningenPanel'
 
 function BiedAdviesBadge({ advies }: { advies: string }) {
   const colors: Record<string, string> = {
@@ -578,8 +579,9 @@ export default function WaardebepalingPage() {
       {/* Resultaten in twee kolommen */}
       {result && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-1">
+          <div className="lg:col-span-1 space-y-6">
             <WoningGegevensColumn result={result} />
+            <VoorzieningenPanel postcode={result.postcode} huisnummer={result.huisnummer} />
           </div>
           <div className="lg:col-span-2">
             <AnalyseColumn result={result} onCopy={handleCopy} copied={copied} />
