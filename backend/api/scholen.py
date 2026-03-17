@@ -125,6 +125,54 @@ def scholen_nabij(
     return results[:limit]
 
 
+@router.get("/geojson")
+def scholen_geojson(
+    type: Optional[str] = Query(None, description="Filter op type"),
+    db: Session = Depends(get_db),
+):
+    """GeoJSON FeatureCollection van alle scholen met coördinaten."""
+    query = db.query(School).filter(School.lat.isnot(None), School.lng.isnot(None))
+
+    if type:
+        query = query.filter(School.type == type)
+
+    schools = query.all()
+
+    features = []
+    for s in schools:
+        props = {
+            "brin": s.brin,
+            "vestigingsnummer": s.vestigingsnummer,
+            "naam": s.naam,
+            "type": s.type,
+            "onderwijstype": s.onderwijstype,
+            "denominatie": s.denominatie,
+            "leerlingen": s.leerlingen,
+            "inspectie_oordeel": s.inspectie_oordeel,
+        }
+        # Kwaliteitsdata afhankelijk van type
+        if s.type == "basisonderwijs":
+            props["advies_havo_vwo_pct"] = s.advies_havo_vwo_pct
+            props["gem_eindtoets"] = s.gem_eindtoets
+        else:
+            props["slagingspercentage"] = s.slagingspercentage
+            props["gem_examencijfer"] = s.gem_examencijfer
+
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [s.lng, s.lat],
+            },
+            "properties": props,
+        })
+
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+    }
+
+
 @router.get("/{brin}/{vestiging}", response_model=SchoolDetail)
 def get_school(
     brin: str,
