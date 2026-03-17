@@ -1,14 +1,15 @@
 """
-Bulk download script for transaction data.
+Bulk download script for transaction and school data.
 
-Downloads all available transaction data from OpenKadaster and Miljoenhuizen
-and stores it in the local SQLite database.
+Downloads all available transaction data from OpenKadaster and Miljoenhuizen,
+and school data from DUO, and stores it in the local SQLite database.
 
 Usage:
     cd backend && source venv/bin/activate
-    python bulk_download.py                    # Both sources
+    python bulk_download.py                    # All transaction sources
     python bulk_download.py --source openkadaster
     python bulk_download.py --source miljoenhuizen
+    python bulk_download.py --source duo-scholen
     python bulk_download.py --source miljoenhuizen --plaatsen den-haag voorburg
 """
 
@@ -23,8 +24,10 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from collectors.kadaster_collector import create_kadaster_collector
 from collectors.miljoenhuizen_collector import create_miljoenhuizen_collector
+from collectors.duo_school_collector import create_duo_school_collector
 from models.database import SessionLocal, init_db
 from models.transactie import Transactie
+from models.school import School
 
 
 # Default cities to scrape from Miljoenhuizen
@@ -213,6 +216,91 @@ def download_miljoenhuizen(plaatsen: Optional[List[str]] = None, max_pages: int 
     return inserted
 
 
+def download_duo_scholen() -> int:
+    """Download school data from DUO CKAN API."""
+    print("\n=== DUO Scholen ===")
+    collector = create_duo_school_collector()
+
+    schools = collector.fetch_all()
+    print(f"  {len(schools)} scholen opgehaald")
+
+    if not schools:
+        return 0
+
+    db = SessionLocal()
+    inserted = 0
+    updated = 0
+
+    try:
+        for s in schools:
+            stmt = sqlite_insert(School).values(
+                brin=s.brin,
+                vestigingsnummer=s.vestigingsnummer,
+                naam=s.naam,
+                type=s.type,
+                onderwijstype=s.onderwijstype,
+                straat=s.straat,
+                postcode=s.postcode,
+                plaats=s.plaats,
+                gemeente=s.gemeente,
+                denominatie=s.denominatie,
+                leerlingen=s.leerlingen,
+                lat=s.lat,
+                lng=s.lng,
+                advies_havo_vwo_pct=s.advies_havo_vwo_pct,
+                gem_eindtoets=s.gem_eindtoets,
+                slagingspercentage=s.slagingspercentage,
+                gem_examencijfer=s.gem_examencijfer,
+                inspectie_oordeel=s.inspectie_oordeel,
+                updated_at=datetime.utcnow(),
+            ).on_conflict_do_update(
+                index_elements=["brin", "vestigingsnummer"],
+                set_={
+                    "naam": s.naam,
+                    "type": s.type,
+                    "onderwijstype": s.onderwijstype,
+                    "straat": s.straat,
+                    "postcode": s.postcode,
+                    "plaats": s.plaats,
+                    "gemeente": s.gemeente,
+                    "denominatie": s.denominatie,
+                    "leerlingen": s.leerlingen,
+                    "lat": s.lat,
+                    "lng": s.lng,
+                    "advies_havo_vwo_pct": s.advies_havo_vwo_pct,
+                    "gem_eindtoets": s.gem_eindtoets,
+                    "slagingspercentage": s.slagingspercentage,
+                    "gem_examencijfer": s.gem_examencijfer,
+                    "inspectie_oordeel": s.inspectie_oordeel,
+                    "updated_at": datetime.utcnow(),
+                },
+            )
+            result = db.execute(stmt)
+            if result.rowcount > 0:
+                inserted += 1
+
+        db.commit()
+
+        total = db.query(School).count()
+        po = db.query(School).filter(School.type == "basisonderwijs").count()
+        vo = db.query(School).filter(School.type == "voortgezet").count()
+        print(f"  {inserted} scholen opgeslagen/bijgewerkt")
+        print(f"  Totaal in DB: {total} ({po} PO, {vo} VO)")
+
+        # Stats
+        from sqlalchemy import func
+        with_coords = db.query(School).filter(School.lat.isnot(None)).count()
+        with_advies = db.query(School).filter(School.advies_havo_vwo_pct.isnot(None)).count()
+        with_examen = db.query(School).filter(School.slagingspercentage.isnot(None)).count()
+        print(f"  Met coördinaten: {with_coords}")
+        print(f"  PO met adviesdata: {with_advies}")
+        print(f"  VO met examendata: {with_examen}")
+    finally:
+        db.close()
+
+    return inserted
+
+
 def show_stats():
     """Show database statistics."""
     db = SessionLocal()
@@ -258,7 +346,7 @@ def main():
     parser = argparse.ArgumentParser(description="Bulk download transactiedata")
     parser.add_argument(
         "--source",
-        choices=["openkadaster", "miljoenhuizen", "all"],
+        choices=["openkadaster", "miljoenhuizen", "duo-scholen", "all"],
         default="all",
         help="Databron (default: all)",
     )
@@ -297,6 +385,9 @@ def main():
             plaatsen=args.plaatsen,
             max_pages=args.max_pages,
         )
+
+    if args.source in ("duo-scholen", "all"):
+        total += download_duo_scholen()
 
     show_stats()
 

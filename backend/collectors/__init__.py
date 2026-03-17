@@ -50,6 +50,11 @@ from collectors.miljoenhuizen_collector import (
     PrijsHistorieEntry,
     create_miljoenhuizen_collector,
 )
+from collectors.duo_school_collector import (
+    DUOSchoolCollector,
+    SchoolInfo,
+    create_duo_school_collector,
+)
 
 __all__ = [
     # BAG
@@ -100,4 +105,8 @@ __all__ = [
     "MiljoenhuizenWoning",
     "PrijsHistorieEntry",
     "create_miljoenhuizen_collector",
+    # DUO Scholen
+    "DUOSchoolCollector",
+    "SchoolInfo",
+    "create_duo_school_collector",
 ]
