@@ -1,16 +1,19 @@
-"""API routes for voorzieningen (nearby facilities)."""
+"""API routes for voorzieningen (nearby facilities) and fietsafstand."""
 
 import logging
 import re
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import requests
+import yaml
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from collectors import (
     create_cbs_nabijheid_collector,
     create_osm_overpass_collector,
+    create_cycling_collector,
     geocode_address_pdok,
 )
 
@@ -21,6 +24,8 @@ router = APIRouter(prefix="/api/voorzieningen", tags=["voorzieningen"])
 # Singleton collectors (lazy init)
 _nabijheid_collector = None
 _osm_collector = None
+_cycling_collector = None
+_werklocaties = None
 
 
 def _get_nabijheid_collector():
@@ -35,6 +40,28 @@ def _get_osm_collector():
     if _osm_collector is None:
         _osm_collector = create_osm_overpass_collector()
     return _osm_collector
+
+
+def _get_cycling_collector():
+    global _cycling_collector
+    if _cycling_collector is None:
+        _cycling_collector = create_cycling_collector()
+    return _cycling_collector
+
+
+def _get_werklocaties() -> List[Dict]:
+    """Load werklocaties from config/werklocaties.yaml."""
+    global _werklocaties
+    if _werklocaties is None:
+        config_path = Path(__file__).parent.parent.parent / "config" / "werklocaties.yaml"
+        try:
+            with open(config_path) as f:
+                data = yaml.safe_load(f)
+            _werklocaties = data.get("werklocaties", [])
+        except Exception as exc:
+            logger.warning("Could not load werklocaties.yaml: %s", exc)
+            _werklocaties = []
+    return _werklocaties
 
 
 # --- Response models ---
@@ -56,9 +83,18 @@ class CBSAfstand(BaseModel):
     looptijd_min: int
 
 
+class FietsafstandItem(BaseModel):
+    dest_naam: str
+    afstand_km: float
+    reistijd_min: int
+    geometry: Optional[List] = None
+    error: Optional[str] = None
+
+
 class VoorzieningenResponse(BaseModel):
     cbs_afstanden: Dict[str, List[CBSAfstand]]
     voorzieningen: List[VoorzieningItem]
+    fietsafstanden: List[FietsafstandItem] = []
     score_voorzieningen: Optional[float] = None
     buurt_code: Optional[str] = None
     buurt_naam: Optional[str] = None
@@ -149,12 +185,15 @@ def _build_cbs_afstanden(afstanden: Dict[str, float]) -> Dict[str, List[CBSAfsta
 def _get_score_voorzieningen(buurt_code: str) -> Optional[float]:
     """Get the voorzieningen score from the Buurt model if available."""
     try:
-        from models.database import get_session
+        from models.database import SessionLocal
         from models import Buurt
-        session = get_session()
-        buurt = session.query(Buurt).filter(Buurt.code == buurt_code).first()
-        if buurt:
-            return buurt.score_voorzieningen
+        session = SessionLocal()
+        try:
+            buurt = session.query(Buurt).filter(Buurt.code == buurt_code).first()
+            if buurt:
+                return buurt.score_voorzieningen
+        finally:
+            session.close()
     except Exception:
         pass
     return None
@@ -227,9 +266,28 @@ def _build_response(
 
         score_voorzieningen = _get_score_voorzieningen(buurt_code)
 
+    # Fietsafstanden naar werklocaties
+    fietsafstanden: List[FietsafstandItem] = []
+    werklocaties = _get_werklocaties()
+    if werklocaties:
+        try:
+            cycling = _get_cycling_collector()
+            routes = cycling.get_routes_to_werklocaties(lat, lng, werklocaties)
+            for route in routes:
+                fietsafstanden.append(FietsafstandItem(
+                    dest_naam=route.dest_naam,
+                    afstand_km=route.afstand_km,
+                    reistijd_min=route.reistijd_min,
+                    geometry=route.geometry,
+                    error=route.error,
+                ))
+        except Exception as exc:
+            logger.warning("Cycling route calculation failed: %s", exc)
+
     return VoorzieningenResponse(
         cbs_afstanden=cbs_afstanden,
         voorzieningen=osm_items,
+        fietsafstanden=fietsafstanden,
         score_voorzieningen=score_voorzieningen,
         buurt_code=buurt_code,
         buurt_naam=buurt_naam,
