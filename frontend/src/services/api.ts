@@ -578,9 +578,18 @@ export interface CBSAfstand {
   looptijd_min: number
 }
 
+export interface FietsafstandItem {
+  dest_naam: string
+  afstand_km: number
+  reistijd_min: number
+  geometry?: number[][] | null
+  error?: string | null
+}
+
 export interface VoorzieningenResponse {
   cbs_afstanden: Record<string, CBSAfstand[]>
   voorzieningen: VoorzieningItem[]
+  fietsafstanden: FietsafstandItem[]
   score_voorzieningen?: number
   buurt_code?: string
   buurt_naam?: string

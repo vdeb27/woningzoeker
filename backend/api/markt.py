@@ -36,8 +36,6 @@ class MarktOverzicht(BaseModel):
     totaal_te_koop: int
     gemiddelde_vraagprijs: Optional[float] = None
     gemiddelde_m2_prijs: Optional[float] = None
-    nieuw_deze_week: int = 0
-    verkocht_deze_week: int = 0
 
 
 class CBSMarktData(BaseModel):
@@ -241,8 +239,6 @@ def get_markt_overzicht(
         totaal_te_koop=len(woningen),
         gemiddelde_vraagprijs=sum(prijzen) / len(prijzen) if prijzen else None,
         gemiddelde_m2_prijs=sum(m2_prijzen) / len(m2_prijzen) if m2_prijzen else None,
-        nieuw_deze_week=0,  # TODO: implement
-        verkocht_deze_week=0,  # TODO: implement
     )
 
 

@@ -1,0 +1,7 @@
+werklocaties:
+  - naam: "Centraal Station Den Haag"
+    lat: 52.0812
+    lng: 4.3249
+  - naam: "Station Den Haag Mariahoeve"
+    lat: 52.0922
+    lng: 4.3461
