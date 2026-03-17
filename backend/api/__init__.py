@@ -5,6 +5,7 @@ from api.woningen import router as woningen_router
 from api.watchlist import router as watchlist_router
 from api.markt import router as markt_router
 from api.scholen import router as scholen_router
+from api.voorzieningen import router as voorzieningen_router
 
 __all__ = [
     "buurten_router",
@@ -12,4 +13,5 @@ __all__ = [
     "watchlist_router",
     "markt_router",
     "scholen_router",
+    "voorzieningen_router",
 ]
