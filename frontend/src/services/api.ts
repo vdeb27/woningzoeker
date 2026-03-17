@@ -560,6 +560,52 @@ export async function fetchScholenNabij(params: {
   return response.json()
 }
 
+// Voorzieningen
+export interface VoorzieningItem {
+  naam: string
+  type: string
+  categorie: string
+  afstand_m: number
+  looptijd_min: number
+  lat: number
+  lng: number
+}
+
+export interface CBSAfstand {
+  indicator: string
+  label: string
+  afstand_km: number
+  looptijd_min: number
+}
+
+export interface VoorzieningenResponse {
+  cbs_afstanden: Record<string, CBSAfstand[]>
+  voorzieningen: VoorzieningItem[]
+  score_voorzieningen?: number
+  buurt_code?: string
+  buurt_naam?: string
+  lat: number
+  lng: number
+}
+
+export async function fetchVoorzieningen(params: {
+  postcode: string
+  huisnummer: number
+  radius_m?: number
+}): Promise<VoorzieningenResponse> {
+  const searchParams = new URLSearchParams({
+    postcode: params.postcode,
+    huisnummer: String(params.huisnummer),
+  })
+  if (params.radius_m) searchParams.append('radius_m', String(params.radius_m))
+
+  const response = await fetch(`${API_BASE}/voorzieningen/adres?${searchParams}`)
+  if (!response.ok) {
+    throw new Error('Voorzieningen ophalen mislukt')
+  }
+  return response.json()
+}
+
 // Markt
 export async function fetchMarktOverzicht(gemeente?: string) {
   const params = gemeente ? `?gemeente=${gemeente}` : ''

@@ -45,58 +45,161 @@ export function ScoreBar({ score, label }: { score?: number; label: string }) {
   )
 }
 
+// CBS nabijheid indicator categories (subset of what the API uses)
+const CBS_NABIJHEID_CATEGORIEEN: Record<string, Record<string, string>> = {
+  dagelijks: {
+    afstand_supermarkt: 'Supermarkt',
+    afstand_dagelijkse_levensmiddelen: 'Dagelijkse levensmiddelen',
+  },
+  zorg: {
+    afstand_huisarts: 'Huisarts',
+    afstand_apotheek: 'Apotheek',
+    afstand_ziekenhuis: 'Ziekenhuis',
+  },
+  onderwijs: {
+    afstand_kinderdagverblijf: 'Kinderdagverblijf',
+    afstand_basisonderwijs: 'Basisonderwijs',
+    afstand_voortgezet_onderwijs: 'Voortgezet onderwijs',
+  },
+  sport: {
+    afstand_zwembad: 'Zwembad',
+    afstand_sportterrein: 'Sportterrein',
+  },
+  vervoer: {
+    afstand_treinstation: 'Treinstation',
+    afstand_oprit_hoofdverkeersweg: 'Oprit hoofdweg',
+  },
+  natuur: {
+    afstand_openbaar_groen: 'Openbaar groen',
+    afstand_bos: 'Bos',
+  },
+}
+
+const CBS_CAT_LABELS: Record<string, string> = {
+  dagelijks: 'Dagelijks',
+  zorg: 'Zorg',
+  onderwijs: 'Onderwijs',
+  sport: 'Sport',
+  vervoer: 'Vervoer',
+  natuur: 'Natuur',
+}
+
+function afstandKleur(km: number): string {
+  if (km <= 0.5) return 'text-green-700 bg-green-100'
+  if (km <= 1.5) return 'text-yellow-700 bg-yellow-100'
+  return 'text-red-700 bg-red-100'
+}
+
+function BuurtNabijheidDetail({ indicatoren }: { indicatoren: Record<string, number> }) {
+  const categories = Object.entries(CBS_NABIJHEID_CATEGORIEEN)
+    .map(([cat, indicators]) => {
+      const items = Object.entries(indicators)
+        .filter(([key]) => indicatoren[key] !== undefined && indicatoren[key] !== null)
+        .map(([key, label]) => ({ key, label, km: indicatoren[key] }))
+      return { cat, items }
+    })
+    .filter(({ items }) => items.length > 0)
+
+  if (categories.length === 0) return null
+
+  return (
+    <div className="mt-3 pt-3 border-t border-gray-100">
+      <div className="text-xs font-medium text-gray-500 mb-2">CBS Afstanden (hemelsbreed)</div>
+      <div className="grid grid-cols-2 gap-2">
+        {categories.map(({ cat, items }) => (
+          <div key={cat} className="bg-gray-50 rounded p-2">
+            <div className="text-xs font-medium text-gray-500 mb-1">
+              {CBS_CAT_LABELS[cat] || cat}
+            </div>
+            {items.map(({ key, label, km }) => (
+              <div key={key} className="flex justify-between items-center text-xs py-0.5">
+                <span className="text-gray-600 truncate mr-1">{label}</span>
+                <span className={`px-1 py-0.5 rounded whitespace-nowrap ${afstandKleur(km)}`}>
+                  {km.toFixed(1)} km
+                </span>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+      <div className="text-xs text-gray-400 mt-1">Bron: CBS Nabijheid voorzieningen</div>
+    </div>
+  )
+}
+
 function BuurtCard({
   buurt,
   isSelected,
+  isExpanded,
   onToggle,
+  onExpand,
 }: {
   buurt: Buurt
   isSelected: boolean
+  isExpanded: boolean
   onToggle: () => void
+  onExpand: () => void
 }) {
+  const hasNabijheid = buurt.indicatoren && Object.keys(buurt.indicatoren).some(k => k.startsWith('afstand_'))
+
   return (
     <div
-      className={`bg-white rounded-lg shadow hover:shadow-md transition-shadow p-4 cursor-pointer border-2 ${
+      className={`bg-white rounded-lg shadow hover:shadow-md transition-shadow p-4 border-2 ${
         isSelected ? 'border-primary-500 ring-2 ring-primary-200' : 'border-transparent'
       }`}
-      onClick={onToggle}
     >
-      <div className="flex justify-between items-start mb-3">
-        <div>
-          <h3 className="font-semibold text-gray-900">{buurt.naam}</h3>
-          <p className="text-sm text-gray-500">{buurt.gemeente_naam}</p>
+      <div className="cursor-pointer" onClick={onToggle}>
+        <div className="flex justify-between items-start mb-3">
+          <div>
+            <h3 className="font-semibold text-gray-900">{buurt.naam}</h3>
+            <p className="text-sm text-gray-500">{buurt.gemeente_naam}</p>
+          </div>
+          {buurt.score_totaal !== undefined && (
+            <div className="flex items-center">
+              <div
+                className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold ${
+                  buurt.score_totaal >= 0.7
+                    ? 'bg-green-500'
+                    : buurt.score_totaal >= 0.5
+                    ? 'bg-yellow-500'
+                    : 'bg-red-500'
+                }`}
+              >
+                {Math.round(buurt.score_totaal * 100)}
+              </div>
+            </div>
+          )}
         </div>
-        {buurt.score_totaal !== undefined && (
-          <div className="flex items-center">
-            <div
-              className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold ${
-                buurt.score_totaal >= 0.7
-                  ? 'bg-green-500'
-                  : buurt.score_totaal >= 0.5
-                  ? 'bg-yellow-500'
-                  : 'bg-red-500'
-              }`}
-            >
-              {Math.round(buurt.score_totaal * 100)}
+
+        <div className="grid grid-cols-2 gap-4 text-sm mb-4">
+          <div>
+            <span className="text-gray-500">Mediaan vraagprijs</span>
+            <div className="font-medium">
+              {buurt.median_vraagprijs ? formatPrijs(buurt.median_vraagprijs) : '-'}
             </div>
           </div>
+          <div>
+            <span className="text-gray-500">Te koop</span>
+            <div className="font-medium">{buurt.aantal_te_koop ?? '-'} woningen</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex justify-between items-center">
+        <div className="text-xs text-gray-400">{buurt.code}</div>
+        {hasNabijheid && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onExpand() }}
+            className="text-xs text-primary-600 hover:text-primary-800"
+          >
+            {isExpanded ? 'Verberg afstanden \u25B2' : 'Toon afstanden \u25BC'}
+          </button>
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-4 text-sm mb-4">
-        <div>
-          <span className="text-gray-500">Mediaan vraagprijs</span>
-          <div className="font-medium">
-            {buurt.median_vraagprijs ? formatPrijs(buurt.median_vraagprijs) : '-'}
-          </div>
-        </div>
-        <div>
-          <span className="text-gray-500">Te koop</span>
-          <div className="font-medium">{buurt.aantal_te_koop ?? '-'} woningen</div>
-        </div>
-      </div>
-
-      <div className="text-xs text-gray-400">{buurt.code}</div>
+      {isExpanded && buurt.indicatoren && (
+        <BuurtNabijheidDetail indicatoren={buurt.indicatoren} />
+      )}
     </div>
   )
 }
@@ -107,6 +210,7 @@ export default function BuurtenPage() {
   const [colorIndicator, setColorIndicator] = useState<string>('score_totaal')
   const [selectedBuurten, setSelectedBuurten] = useState<string[]>([])
   const [searchQuery, setSearchQuery] = useState('')
+  const [expandedBuurt, setExpandedBuurt] = useState<string | null>(null)
 
   const { data: buurten, isLoading, error } = useQuery({
     queryKey: ['buurten', gemeente, minScore],
@@ -336,7 +440,9 @@ export default function BuurtenPage() {
                 key={buurt.code}
                 buurt={buurt}
                 isSelected={selectedBuurten.includes(buurt.code)}
+                isExpanded={expandedBuurt === buurt.code}
                 onToggle={() => handleBuurtToggle(buurt.code)}
+                onExpand={() => setExpandedBuurt(expandedBuurt === buurt.code ? null : buurt.code)}
               />
             ))}
           </div>
