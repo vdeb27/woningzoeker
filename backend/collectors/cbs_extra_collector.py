@@ -3,10 +3,11 @@ CBS Extra Buurt Datasets Collector.
 
 Fetches additional CBS datasets at buurt/wijk level:
 - 84468NED: Geregistreerde misdrijven per buurt (2018)
-- 86258NED: Arbeidsdeelname per wijk/buurt (2024)
-- 85539NED: SES-WOA scores per wijk/buurt
-- 86232NED: Opleidingsniveau per wijk/buurt (2024)
+- 86092NED: SES-WOA scores per wijk/buurt (regio-indeling 2024)
 - 86211NED: Bodemgebruik per wijk/buurt (2022)
+
+Note: Arbeidsdeelname and Opleidingsniveau are now included in
+Kerncijfers 2025 (86165NED) and no longer fetched separately.
 
 All data is merged into a single dict keyed by buurt code.
 """
@@ -52,21 +53,8 @@ MISDRIJVEN_COLUMNS = {
     "geweld_per_1000": "GeweldsEnSeksueleMisdrijven_30",
 }
 
-# Arbeidsdeelname per wijk/buurt (2024)
-ARBEID_DATASET = "86258NED"
-ARBEID_COLUMNS = {
-    "beroepsbevolking": "BeroepsEnNietBeroepsbevolking_1",
-    "werkzame_beroepsbevolking": "WerkzameBeroepsbevolking_2",
-    "netto_arbeidsparticipatie": "NettoArbeidsparticipatie_3",
-    "werknemers": "Werknemer_4",
-    "werknemer_vast": "WerknemerMetVasteArbeidsrelatie_5",
-    "werknemer_flex": "WerknemerMetFlexibeleArbeidsrelatie_6",
-    "zelfstandig": "Zelfstandige_7",
-    "zzp": "ZelfstandigeZonderPersoneelZzp_8",
-}
-
-# SES-WOA scores (sociaal-economische status)
-SES_DATASET = "85539NED"
+# SES-WOA scores (sociaal-economische status) — regio-indeling 2024
+SES_DATASET = "86092NED"
 SES_COLUMNS = {
     "ses_huishoudens": "ParticuliereHuishoudens_2",
     "ses_laag_pct": "k_1eTotEnMet40ePercentielgroep_3",
@@ -74,10 +62,6 @@ SES_COLUMNS = {
     "ses_hoog_pct": "k_81eTotEnMet100ePercentielgroep_5",
     "ses_gemiddeld": "GemiddeldePercentielgroep_6",
 }
-
-# Opleidingsniveau per wijk/buurt (2024) — has Opleidingsniveau dimension
-# We'll handle this specially in _fetch_opleiding()
-OPLEIDING_DATASET = "86232NED"
 
 # Bodemgebruik per wijk/buurt (2022)
 BODEM_DATASET = "86211NED"
@@ -219,10 +203,8 @@ class CBSExtraCollector:
         """Fetch all extra CBS datasets and merge."""
         datasets = [
             ("Misdrijven", MISDRIJVEN_DATASET, MISDRIJVEN_COLUMNS, "Codering_3", None),
-            ("Arbeidsdeelname", ARBEID_DATASET, ARBEID_COLUMNS, "WijkenEnBuurten",
-             {"Geslacht": "Totaal mannen en vrouwen", "Leeftijd": "15 tot 75 jaar"}),
             ("SES-WOA", SES_DATASET, SES_COLUMNS, "RegiocodeGemeenteWijkBuurt_1",
-             {"Perioden": "2021"}),
+             {"Perioden": "2022"}),
             ("Bodemgebruik", BODEM_DATASET, BODEM_COLUMNS, "Codering_3", None),
         ]
 
@@ -237,58 +219,8 @@ class CBSExtraCollector:
             except Exception as exc:
                 print(f"  {name} mislukt: {exc}")
 
-        # Opleidingsniveau — special handling for multi-dimension
-        try:
-            data = self._fetch_opleiding()
-            for code, values in data.items():
-                if code not in self._data:
-                    self._data[code] = {}
-                self._data[code].update(values)
-            print(f"  Opleidingsniveau: {len(data)} buurten")
-        except Exception as exc:
-            print(f"  Opleidingsniveau mislukt: {exc}")
-
         self._loaded = True
         self._save_to_cache()
-
-    def _fetch_opleiding(self) -> Dict[str, Dict[str, float]]:
-        """Fetch opleidingsniveau with 3 levels as separate columns."""
-        name_to_code = _build_name_to_code_map(OPLEIDING_DATASET)
-        target_prefixes = tuple(f"BU{m}" for m in TARGET_MUNICIPALITIES)
-
-        level_map = {
-            "1 Basisonderwijs, vmbo, mbo1": "opleiding_laag_pct",
-            "2 Havo, vwo, mbo2-4": "opleiding_midden_pct",
-            "3 Hbo, wo": "opleiding_hoog_pct",
-        }
-
-        all_records = cbsodata.get_data(
-            OPLEIDING_DATASET,
-            select=["Opleidingsniveau", "WijkenEnBuurten", "Bevolking15Tot75Jaar_2"],
-        )
-
-        result: Dict[str, Dict[str, float]] = {}
-        for record in all_records:
-            name = str(record.get("WijkenEnBuurten", "")).strip()
-            code = name_to_code.get(name, "")
-            if not code.startswith(target_prefixes):
-                continue
-
-            level = str(record.get("Opleidingsniveau", "")).strip()
-            col_name = level_map.get(level)
-            if not col_name:
-                continue
-
-            val = record.get("Bevolking15Tot75Jaar_2")
-            if val is not None:
-                try:
-                    if code not in result:
-                        result[code] = {}
-                    result[code][col_name] = float(val)
-                except (ValueError, TypeError):
-                    pass
-
-        return result
 
     def _ensure_loaded(self) -> None:
         if self._loaded:
