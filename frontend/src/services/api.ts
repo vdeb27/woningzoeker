@@ -509,6 +509,57 @@ export async function fetchWoningenGeoJSON(): Promise<GeoJSONFeatureCollection> 
   return response.json()
 }
 
+// Scholen
+export interface SchoolSummary {
+  brin: string
+  vestigingsnummer: string
+  naam: string
+  type: string  // "basisonderwijs" | "voortgezet"
+  gemeente: string
+  onderwijstype?: string
+  postcode?: string
+  plaats?: string
+  leerlingen?: number
+  lat?: number
+  lng?: number
+  advies_havo_vwo_pct?: number
+  gem_eindtoets?: number
+  slagingspercentage?: number
+  gem_examencijfer?: number
+  inspectie_oordeel?: string
+}
+
+export async function fetchScholenGeoJSON(params?: {
+  type?: string
+}): Promise<GeoJSONFeatureCollection> {
+  const searchParams = new URLSearchParams()
+  if (params?.type) searchParams.append('type', params.type)
+  const response = await fetch(`${API_BASE}/scholen/geojson?${searchParams}`)
+  if (!response.ok) {
+    throw new Error('Scholen GeoJSON ophalen mislukt')
+  }
+  return response.json()
+}
+
+export async function fetchScholenNabij(params: {
+  lat: number
+  lng: number
+  radius?: number
+  type?: string
+}): Promise<(SchoolSummary & { afstand_m: number })[]> {
+  const searchParams = new URLSearchParams({
+    lat: String(params.lat),
+    lng: String(params.lng),
+  })
+  if (params.radius) searchParams.append('radius', String(params.radius))
+  if (params.type) searchParams.append('type', params.type)
+  const response = await fetch(`${API_BASE}/scholen/nabij?${searchParams}`)
+  if (!response.ok) {
+    throw new Error('Nabije scholen ophalen mislukt')
+  }
+  return response.json()
+}
+
 // Markt
 export async function fetchMarktOverzicht(gemeente?: string) {
   const params = gemeente ? `?gemeente=${gemeente}` : ''

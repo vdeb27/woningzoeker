@@ -1,10 +1,10 @@
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { MapContainer, TileLayer, GeoJSON, Marker, Popup } from 'react-leaflet'
+import { MapContainer, TileLayer, GeoJSON, Marker, Popup, CircleMarker, LayersControl } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
-import { fetchBuurtenGeoJSON, fetchWoningenGeoJSON, formatPrijs } from '../services/api'
+import { fetchBuurtenGeoJSON, fetchWoningenGeoJSON, fetchScholenGeoJSON, formatPrijs } from '../services/api'
 
 // Fix default marker icons for Vite bundler
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -72,6 +72,11 @@ export default function BuurtMap({
     queryFn: fetchWoningenGeoJSON,
   })
 
+  const { data: scholenGeoJSON } = useQuery({
+    queryKey: ['scholen-geojson'],
+    queryFn: () => fetchScholenGeoJSON(),
+  })
+
   // Calculate min/max for dynamic coloring
   const { minVal, maxVal } = useMemo(() => {
     if (!buurtenGeoJSON?.features) return { minVal: 0, maxVal: 1 }
@@ -112,6 +117,19 @@ export default function BuurtMap({
         properties: f.properties,
       }))
   }, [woningenGeoJSON])
+
+  const schoolMarkers = useMemo(() => {
+    if (!scholenGeoJSON?.features) return []
+    return scholenGeoJSON.features
+      .filter((f) => f.geometry?.type === 'Point' && f.geometry?.coordinates)
+      .map((f) => ({
+        position: [
+          (f.geometry.coordinates as number[])[1],
+          (f.geometry.coordinates as number[])[0],
+        ] as [number, number],
+        properties: f.properties,
+      }))
+  }, [scholenGeoJSON])
 
   return (
     <div className="rounded-lg overflow-hidden shadow mb-6 relative" style={{ height: 500 }}>
@@ -183,20 +201,102 @@ export default function BuurtMap({
           />
         )}
 
-        {woningMarkers.map((marker, idx) => {
-          const p = marker.properties
-          return (
-            <Marker key={idx} position={marker.position}>
-              <Popup>
-                <strong>{p.adres as string}</strong>
-                <br />
-                {p.vraagprijs ? formatPrijs(p.vraagprijs as number) : 'Prijs onbekend'}
-                {p.woonoppervlakte ? ` | ${p.woonoppervlakte}m²` : ''}
-                {p.woningtype ? <><br />{p.woningtype as string}</> : null}
-              </Popup>
-            </Marker>
-          )
-        })}
+        <LayersControl position="topright">
+          <LayersControl.Overlay name="Woningen" checked>
+            <>{woningMarkers.map((marker, idx) => {
+              const p = marker.properties
+              return (
+                <Marker key={`w-${idx}`} position={marker.position}>
+                  <Popup>
+                    <strong>{p.adres as string}</strong>
+                    <br />
+                    {p.vraagprijs ? formatPrijs(p.vraagprijs as number) : 'Prijs onbekend'}
+                    {p.woonoppervlakte ? ` | ${p.woonoppervlakte}m²` : ''}
+                    {p.woningtype ? <><br />{p.woningtype as string}</> : null}
+                  </Popup>
+                </Marker>
+              )
+            })}</>
+          </LayersControl.Overlay>
+
+          <LayersControl.Overlay name="Basisscholen">
+            <>{schoolMarkers
+              .filter((m) => m.properties.type === 'basisonderwijs')
+              .map((marker, idx) => {
+                const p = marker.properties
+                return (
+                  <CircleMarker
+                    key={`po-${idx}`}
+                    center={marker.position}
+                    radius={6}
+                    pathOptions={{
+                      color: '#1d4ed8',
+                      fillColor: '#3b82f6',
+                      fillOpacity: 0.8,
+                      weight: 1.5,
+                    }}
+                  >
+                    <Popup>
+                      <strong>{p.naam as string}</strong>
+                      <br />
+                      <span className="text-xs text-gray-500">Basisonderwijs &middot; {p.denominatie as string}</span>
+                      {p.leerlingen != null && <><br />{p.leerlingen as number} leerlingen</>}
+                      {p.advies_havo_vwo_pct != null && (
+                        <><br />HAVO/VWO advies: {p.advies_havo_vwo_pct as number}%</>
+                      )}
+                      {p.gem_eindtoets != null && (
+                        <><br />Gem. eindtoets: {p.gem_eindtoets as number}</>
+                      )}
+                      {p.inspectie_oordeel ? (
+                        <><br />Inspectie: {String(p.inspectie_oordeel)}</>
+                      ) : null}
+                    </Popup>
+                  </CircleMarker>
+                )
+              })}</>
+          </LayersControl.Overlay>
+
+          <LayersControl.Overlay name="Middelbare scholen">
+            <>{schoolMarkers
+              .filter((m) => m.properties.type === 'voortgezet')
+              .map((marker, idx) => {
+                const p = marker.properties
+                return (
+                  <CircleMarker
+                    key={`vo-${idx}`}
+                    center={marker.position}
+                    radius={7}
+                    pathOptions={{
+                      color: '#9333ea',
+                      fillColor: '#a855f7',
+                      fillOpacity: 0.8,
+                      weight: 1.5,
+                    }}
+                  >
+                    <Popup>
+                      <strong>{p.naam as string}</strong>
+                      <br />
+                      <span className="text-xs text-gray-500">
+                        {p.onderwijstype
+                          ? (p.onderwijstype as string).toUpperCase()
+                          : 'Voortgezet onderwijs'}
+                        {p.denominatie ? ` \u00b7 ${p.denominatie as string}` : ''}
+                      </span>
+                      {p.slagingspercentage != null && (
+                        <><br />Slagingspercentage: {p.slagingspercentage as number}%</>
+                      )}
+                      {p.gem_examencijfer != null && (
+                        <><br />Gem. examencijfer: {p.gem_examencijfer as number}</>
+                      )}
+                      {p.inspectie_oordeel ? (
+                        <><br />Inspectie: {String(p.inspectie_oordeel)}</>
+                      ) : null}
+                    </Popup>
+                  </CircleMarker>
+                )
+              })}</>
+          </LayersControl.Overlay>
+        </LayersControl>
       </MapContainer>
 
       {/* Color Legend */}
