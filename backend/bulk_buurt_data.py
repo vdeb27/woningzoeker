@@ -123,17 +123,13 @@ def merge_and_score(buurten, lbm_data, nabijheid_data, rivm_data, extra_data=Non
             for key, val in nab.afstanden.items():
                 indicatoren[key] = val
 
-        # Merge RIVM
+        # Merge RIVM (geluidhinder, slaapverstoring, tevredenheid)
         rivm = rivm_data.get(buurt.buurt_code)
         if rivm:
-            if rivm.no2_concentratie is not None:
-                indicatoren["no2_concentratie"] = rivm.no2_concentratie
-            if rivm.pm25_concentratie is not None:
-                indicatoren["pm25_concentratie"] = rivm.pm25_concentratie
-            if rivm.pm10_concentratie is not None:
-                indicatoren["pm10_concentratie"] = rivm.pm10_concentratie
-            if rivm.geluid_weg_lden is not None:
-                indicatoren["geluid_weg_lden"] = rivm.geluid_weg_lden
+            rivm_dict = rivm.to_dict()
+            for key, val in rivm_dict.items():
+                if key != "buurt_code" and val is not None:
+                    indicatoren[key] = val
 
         # Merge CBS Extra (misdrijven, arbeid, SES, opleiding, bodemgebruik)
         extra = extra_data.get(buurt.buurt_code)

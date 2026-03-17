@@ -1,8 +1,8 @@
 """
 CBS Nabijheid Voorzieningen Collector.
 
-Fetches detailed proximity data from CBS dataset 80306ned
-"Nabijheid voorzieningen; afstand locatie, wijk- en buurtcijfers".
+Fetches detailed proximity data from CBS dataset 86270NED
+"Nabijheid voorzieningen; afstand locatie, wijk- en buurtcijfers 2025".
 Provides more detailed distance data than Kerncijfers.
 """
 
@@ -18,37 +18,63 @@ import requests
 
 
 CBS_API_BASE = "https://opendata.cbs.nl/ODataApi/odata"
-DATASET_NABIJHEID = "80306ned"
+DATASET_NABIJHEID = "86270NED"  # Nabijheid voorzieningen 2025
 
 CACHE_DIR = Path(__file__).parent.parent.parent / "data" / "cache" / "cbs_nabijheid"
 CACHE_DURATION_SECONDS = 30 * 24 * 60 * 60  # 30 days
 
 TARGET_MUNICIPALITIES = ["0518", "1916", "0603"]
 
-# Nabijheid columns - distances to various facilities (dataset 80306ned)
+# Nabijheid columns - distances to various facilities (dataset 86270NED)
 NABIJHEID_COLUMNS = {
-    "afstand_huisarts": "AfstandTotHuisartsenpraktijk_4",
-    "afstand_apotheek": "AfstandTotApotheek_9",
-    "afstand_ziekenhuis": "AfstandTotZiekenhuis_10",
-    "afstand_kinderdagverblijf": "AfstandTotKinderdagverblijf_51",
-    "afstand_buitenschoolse_opvang": "AfstandTotBuitenschoolseOpvang_55",
-    "afstand_basisonderwijs": "AfstandTotSchool_59",
-    "afstand_supermarkt": "AfstandTotGroteSupermarkt_23",
-    "afstand_warenhuis": "AfstandTotWarenhuis_31",
-    "afstand_cafe": "AfstandTotCafe_35",
-    "afstand_restaurant": "AfstandTotRestaurant_43",
-    "afstand_hotel": "AfstandTotHotel_47",
-    "afstand_bioscoop": "AfstandTotBioscoop_103",
-    "afstand_bibliotheek": "AfstandTotBibliotheek_91",
-    "afstand_zwembad": "AfstandTotZwembad_92",
-    "afstand_sportterrein": "AfstandTotSportterrein_83",
-    "afstand_museum": "AfstandTotMuseum_94",
-    "afstand_attractiepark": "AfstandTotAttractie_109",
-    "afstand_brandweerkazerne": "AfstandTotBrandweerkazerne_113",
-    "afstand_oprit_hoofdverkeersweg": "AfstandTotOpritHoofdverkeersweg_88",
-    "afstand_treinstation": "AfstandTotTreinstationsTotaal_89",
-    "afstand_overstapstation": "AfstandTotBelangrijkOverstapstation_90",
-    "afstand_park": "AfstandTotParkOfPlantsoen_76",
+    # Zorg
+    "afstand_huisarts": "AfstandTotHuisartsenpraktijk_5",
+    "afstand_huisartsenpost": "AfstandTotHuisartsenpost_9",
+    "afstand_apotheek": "AfstandTotApotheek_10",
+    "afstand_ziekenhuis": "AfstandTotZiekenhuis_11",
+    "afstand_consultatiebureau": "AfstandTotConsultatiebureau_19",
+    "afstand_fysiotherapeut": "AfstandTotFysiotherapeut_20",
+    # Winkels & horeca
+    "afstand_supermarkt": "AfstandTotGroteSupermarkt_24",
+    "afstand_dagelijkse_levensmiddelen": "AfstandTotOvDagelLevensmiddelen_28",
+    "afstand_warenhuis": "AfstandTotWarenhuis_32",
+    "afstand_cafe": "AfstandTotCafeED_36",
+    "afstand_cafetaria": "AfstandTotCafetariaED_40",
+    "afstand_restaurant": "AfstandTotRestaurant_44",
+    "afstand_hotel": "AfstandTotHotelED_48",
+    # Kinderopvang & onderwijs
+    "afstand_kinderdagverblijf": "AfstandTotKinderdagverblijf_52",
+    "afstand_buitenschoolse_opvang": "AfstandTotBuitenschoolseOpvang_56",
+    "afstand_basisonderwijs": "AfstandTotSchool_60",
+    "afstand_voortgezet_onderwijs": "AfstandTotSchool_64",
+    "afstand_vmbo": "AfstandTotSchool_68",
+    "afstand_havo_vwo": "AfstandTotSchool_72",
+    # Natuur & groen
+    "afstand_openbaar_groen": "AfstandTotOpenbaarGroenTotaal_76",
+    "afstand_park": "AfstandTotParkOfPlantsoen_77",
+    "afstand_dagrecreatie": "AfstandTotDagrecreatiefTerrein_78",
+    "afstand_bos": "AfstandTotBos_79",
+    "afstand_open_natuur": "AfstandTotOpenNatTerreinTotaal_80",
+    "afstand_semi_openbaar_groen": "AfstandTotSemiOpenbaarGroenTotaal_83",
+    "afstand_sportterrein": "AfstandTotSportterrein_84",
+    "afstand_volkstuin": "AfstandTotVolkstuin_85",
+    "afstand_recreatief_water": "AfstandTotRecreatiefBinnenwater_88",
+    # Vervoer
+    "afstand_oprit_hoofdverkeersweg": "AfstandTotOpritHoofdverkeersweg_89",
+    "afstand_treinstation": "AfstandTotTreinstationsTotaal_90",
+    "afstand_overstapstation": "AfstandTotBelangrijkOverstapstation_91",
+    # Cultuur & recreatie
+    "afstand_bibliotheek": "AfstandTotBibliotheek_92",
+    "afstand_zwembad": "AfstandTotBinnenzwembad_93",
+    "afstand_kunstijsbaan": "AfstandTotKunstijsbaan_94",
+    "afstand_museum": "AfstandTotMuseum_95",
+    "afstand_podiumkunsten": "AfstandTotPodiumkunstenTotaal_99",
+    "afstand_poppodium": "AfstandTotPoppodium_103",
+    "afstand_bioscoop": "AfstandTotBioscoop_104",
+    "afstand_sauna": "AfstandTotSauna_108",
+    "afstand_attractie": "AfstandTotAttractie_110",
+    # Veiligheid
+    "afstand_brandweerkazerne": "AfstandTotBrandweerkazerne_114",
 }
 
 
@@ -108,11 +134,7 @@ class CBSNabijheidCollector:
             pass
 
     def _fetch_from_cbs(self) -> None:
-        """Fetch nabijheid data from CBS OData API.
-
-        Uses cbsodata which handles pagination. CBS OData ignores $filter
-        on Codering_3, so we fetch all with $select and filter client-side.
-        """
+        """Fetch nabijheid data from CBS OData API."""
         import cbsodata
 
         select_cols = ["Codering_3"]
