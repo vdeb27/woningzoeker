@@ -18,7 +18,7 @@ logging.basicConfig(
 env_path = Path(__file__).parent / ".env"
 load_dotenv(env_path)
 
-from api import buurten_router, woningen_router, watchlist_router, markt_router, scholen_router, voorzieningen_router
+from api import buurten_router, woningen_router, waardebepaling_router, watchlist_router, markt_router, scholen_router, voorzieningen_router
 from models.database import init_db
 from models import Buurt, Woning, WatchlistItem, Prijshistorie, School  # noqa: F401 - ensure models are loaded
 
@@ -53,6 +53,7 @@ app.add_middleware(
 # Include routers
 app.include_router(buurten_router)
 app.include_router(woningen_router)
+app.include_router(waardebepaling_router)
 app.include_router(watchlist_router)
 app.include_router(markt_router)
 app.include_router(scholen_router)
