@@ -1,10 +1,14 @@
 """
 RIVM Atlas Leefomgeving Collector.
 
-Fetches environmental quality data via WMS GetFeatureInfo requests
-for neighborhood centroids. Data includes:
-- Air quality: NO2, PM2.5, PM10
-- Noise levels: road, rail, aviation
+Fetches environmental quality data from the RIVM Atlas Leefomgeving WFS service
+at buurt level. Data includes:
+- Geluidhinder: wegverkeer, trein, vliegtuig, buren, windturbine (% ernstig gehinderd)
+- Slaapverstoring: wegverkeer, trein, vliegtuig, buren (% ernstig verstoord)
+- Tevredenheid: woning, woonomgeving, groenvoorzieningen
+- Verkeer: verkeersdrukte binnen/buiten bebouwde kom
+
+Source: data.rivm.nl/geo/alo/wfs — layer rivm_20251201_geluidhinder_bu_weg_2024
 """
 
 from __future__ import annotations
@@ -18,49 +22,65 @@ from typing import Any, Dict, Optional
 import requests
 
 
-# RIVM Atlas WMS endpoint
-RIVM_WMS_URL = "https://geodata.rivm.nl/geoserver/wms"
+# RIVM Atlas WFS endpoint (buurt-level geluidhinder)
+RIVM_WFS_URL = "https://data.rivm.nl/geo/alo/wfs"
+RIVM_GELUID_LAYER = "rivm_20251201_geluidhinder_bu_weg_2024"
 
-# Layers for environmental indicators
-RIVM_LAYERS = {
-    "no2_concentratie": "nsl:no2_concentratie_jaargemiddelde",
-    "pm25_concentratie": "nsl:pm25_concentratie_jaargemiddelde",
-    "pm10_concentratie": "nsl:pm10_concentratie_jaargemiddelde",
-    "geluid_weg_lden": "gm:geluid_weg_lden",
-    "geluid_rail_lden": "gm:geluid_rail_lden",
+# Mapping from WFS property names to our indicator names
+RIVM_COLUMNS = {
+    "geluidhinder_weg_pct": "b_gel_weg",
+    "geluidhinder_50db_minus_pct": "b_gel_lt50",
+    "geluidhinder_50db_plus_pct": "b_gel_gt50",
+    "geluidhinder_trein_pct": "b_gel_trei",
+    "geluidhinder_vliegverkeer_pct": "b_gel_vv",
+    "geluidhinder_windturbine_pct": "b_gel_wtn",
+    "geluidhinder_buren_pct": "b_gel_bu",
+    "slaapverstoring_weg_pct": "b_sv_weg",
+    "slaapverstoring_trein_pct": "b_sv_trein",
+    "slaapverstoring_vliegverkeer_pct": "b_sv_vv",
+    "slaapverstoring_buren_pct": "b_sv_bu",
+    "tevredenheid_woning_pct": "b_tevr_won",
+    "tevredenheid_woonomgeving_pct": "b_tevr_wo",
+    "tevredenheid_groen_pct": "b_tevr_gr",
+    "verkeersdrukte_binnen_pct": "b_verk_bi",
+    "verkeersdrukte_buiten_pct": "b_verk_bu",
+    "bereikbaarheid_voldoende_pct": "b_vold_br",
 }
 
 CACHE_DIR = Path(__file__).parent.parent.parent / "data" / "cache" / "rivm"
 CACHE_DURATION_SECONDS = 30 * 24 * 60 * 60  # 30 days
 
-# Centroids of target municipalities (approx) for initial testing
-# In production, use actual buurt centroids calculated from geometrie
-DEFAULT_CENTROIDS = {
-    "0518": (52.07, 4.30),   # Den Haag
-    "1916": (52.08, 4.38),   # Leidschendam-Voorburg
-    "0603": (52.04, 4.33),   # Rijswijk
-}
+TARGET_MUNICIPALITIES = ["0518", "1916", "0603"]
 
 
 @dataclass
 class RIVMResult:
-    """Environmental quality data for a location."""
+    """Environmental quality data for a neighborhood (buurt)."""
     buurt_code: str
-    no2_concentratie: Optional[float] = None  # µg/m³
-    pm25_concentratie: Optional[float] = None  # µg/m³
-    pm10_concentratie: Optional[float] = None  # µg/m³
-    geluid_weg_lden: Optional[float] = None  # dB
-    geluid_rail_lden: Optional[float] = None  # dB
+    # Geluidhinder (% ernstig gehinderd)
+    geluidhinder_weg_pct: Optional[float] = None
+    geluidhinder_50db_minus_pct: Optional[float] = None
+    geluidhinder_50db_plus_pct: Optional[float] = None
+    geluidhinder_trein_pct: Optional[float] = None
+    geluidhinder_vliegverkeer_pct: Optional[float] = None
+    geluidhinder_windturbine_pct: Optional[float] = None
+    geluidhinder_buren_pct: Optional[float] = None
+    # Slaapverstoring (% ernstig verstoord)
+    slaapverstoring_weg_pct: Optional[float] = None
+    slaapverstoring_trein_pct: Optional[float] = None
+    slaapverstoring_vliegverkeer_pct: Optional[float] = None
+    slaapverstoring_buren_pct: Optional[float] = None
+    # Tevredenheid (%)
+    tevredenheid_woning_pct: Optional[float] = None
+    tevredenheid_woonomgeving_pct: Optional[float] = None
+    tevredenheid_groen_pct: Optional[float] = None
+    # Verkeer
+    verkeersdrukte_binnen_pct: Optional[float] = None
+    verkeersdrukte_buiten_pct: Optional[float] = None
+    bereikbaarheid_voldoende_pct: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            "buurt_code": self.buurt_code,
-            "no2_concentratie": self.no2_concentratie,
-            "pm25_concentratie": self.pm25_concentratie,
-            "pm10_concentratie": self.pm10_concentratie,
-            "geluid_weg_lden": self.geluid_weg_lden,
-            "geluid_rail_lden": self.geluid_rail_lden,
-        }
+        return {k: v for k, v in self.__dict__.items() if v is not None}
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RIVMResult":
@@ -72,27 +92,18 @@ class RIVMCollector:
     """
     Collector for RIVM Atlas Leefomgeving environmental data.
 
-    Uses WMS GetFeatureInfo to query environmental indicators
-    at buurt centroid locations.
+    Fetches buurt-level geluidhinder data from data.rivm.nl WFS service.
     """
 
     cache_dir: Path = field(default_factory=lambda: CACHE_DIR)
-    min_delay: float = 0.5  # Rate limit between WMS requests
     _data: Dict[str, RIVMResult] = field(default_factory=dict, init=False, repr=False)
     _loaded: bool = field(default=False, init=False, repr=False)
-    _last_request: float = field(default=0.0, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     def _cache_path(self) -> Path:
         return self.cache_dir / "rivm_data.json"
-
-    def _rate_limit(self) -> None:
-        elapsed = time.time() - self._last_request
-        if elapsed < self.min_delay:
-            time.sleep(self.min_delay - elapsed)
-        self._last_request = time.time()
 
     def _load_from_cache(self) -> bool:
         cache_path = self._cache_path()
@@ -121,94 +132,56 @@ class RIVMCollector:
         except IOError:
             pass
 
-    def _query_wms_point(
-        self, layer: str, lat: float, lon: float
-    ) -> Optional[float]:
-        """Query a single WMS layer at a point using GetFeatureInfo."""
-        self._rate_limit()
-
-        # Convert lat/lon to pixel coordinates in a small bbox
-        # Use a small bounding box around the point
-        delta = 0.0005
-        bbox = f"{lon - delta},{lat - delta},{lon + delta},{lat + delta}"
+    def _fetch_from_wfs(self) -> None:
+        """Fetch buurt-level geluidhinder data from RIVM WFS."""
+        target_prefixes = tuple(f"BU{m}" for m in TARGET_MUNICIPALITIES)
 
         params = {
-            "SERVICE": "WMS",
-            "VERSION": "1.1.1",
-            "REQUEST": "GetFeatureInfo",
-            "LAYERS": layer,
-            "QUERY_LAYERS": layer,
-            "INFO_FORMAT": "application/json",
-            "SRS": "EPSG:4326",
-            "BBOX": bbox,
-            "WIDTH": 101,
-            "HEIGHT": 101,
-            "X": 50,
-            "Y": 50,
+            "service": "WFS",
+            "version": "2.0.0",
+            "request": "GetFeature",
+            "typeName": RIVM_GELUID_LAYER,
+            "outputFormat": "application/json",
         }
 
         try:
-            response = requests.get(RIVM_WMS_URL, params=params, timeout=15)
+            response = requests.get(RIVM_WFS_URL, params=params, timeout=120)
             response.raise_for_status()
-            data = response.json()
+            all_features = response.json().get("features", [])
+        except requests.RequestException as e:
+            print(f"  RIVM WFS fout: {e}")
+            all_features = []
 
-            features = data.get("features", [])
-            if features:
-                props = features[0].get("properties", {})
-                # Try common field names
-                for key in ["GRAY_INDEX", "value", "pixel_value", "concentratie", "lden"]:
-                    if key in props and props[key] is not None:
-                        try:
-                            return float(props[key])
-                        except (ValueError, TypeError):
-                            pass
-                # Try first numeric property
-                for val in props.values():
-                    if val is not None:
-                        try:
-                            return float(val)
-                        except (ValueError, TypeError):
-                            continue
-        except (requests.RequestException, json.JSONDecodeError):
-            pass
+        for feature in all_features:
+            props = feature.get("properties", {})
+            code = str(props.get("buurtcode", "")).strip()
+            if not code.startswith(target_prefixes):
+                continue
 
-        return None
+            values = {"buurt_code": code}
+            for our_key, wfs_key in RIVM_COLUMNS.items():
+                raw = props.get(wfs_key)
+                if raw is not None:
+                    try:
+                        val = float(raw)
+                        if val != -9999.0:  # RIVM no-data sentinel
+                            values[our_key] = val
+                    except (ValueError, TypeError):
+                        pass
 
-    def fetch_for_buurt(self, buurt_code: str, lat: float, lon: float) -> RIVMResult:
-        """Fetch RIVM data for a specific buurt centroid."""
-        result = RIVMResult(buurt_code=buurt_code)
+            self._data[code] = RIVMResult(**values)
 
-        for indicator, layer in RIVM_LAYERS.items():
-            value = self._query_wms_point(layer, lat, lon)
-            if value is not None:
-                setattr(result, indicator, value)
-
-        self._data[buurt_code] = result
-        return result
-
-    def fetch_for_centroids(self, centroids: Dict[str, tuple]) -> None:
-        """
-        Fetch RIVM data for multiple buurt centroids.
-
-        Parameters
-        ----------
-        centroids : dict
-            Mapping of buurt_code -> (lat, lon)
-        """
-        for buurt_code, (lat, lon) in centroids.items():
-            if buurt_code not in self._data:
-                self.fetch_for_buurt(buurt_code, lat, lon)
-
+        self._loaded = True
         self._save_to_cache()
 
     def _ensure_loaded(self) -> None:
         if self._loaded:
             return
-        self._load_from_cache()
-        self._loaded = True
+        if not self._load_from_cache():
+            self._fetch_from_wfs()
 
     def get_buurt(self, buurt_code: str) -> Optional[RIVMResult]:
-        """Get RIVM data for a buurt (from cache only)."""
+        """Get RIVM data for a buurt."""
         self._ensure_loaded()
         code = buurt_code.upper().strip()
         if not code.startswith("BU"):

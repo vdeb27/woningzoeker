@@ -1,12 +1,11 @@
 # Scoring configuration for neighborhood analysis
-# Each indicator has a weight (should sum to ~1.0) and direction
+# Each indicator has a weight and direction
+# Column names reference indicator keys from collectors, not raw CBS column names
 
 # CBS dataset identifiers
 datasets:
-  kerncijfers: "85618NED"  # Kerncijfers wijken en buurten 2024
-  nabijheid: "80306ned"    # Nabijheid voorzieningen
-  solar: "86044NED"        # Zonnestroom
-  labour: "86089NED"       # Arbeidsdeelname
+  kerncijfers: "86165NED"  # Kerncijfers wijken en buurten 2025
+  nabijheid: "86270NED"    # Nabijheid voorzieningen 2025
 
 # Category definitions for radar chart and grouping
 categories:
@@ -15,8 +14,8 @@ categories:
     indicators:
       - income_per_inhabitant
       - labour_participation
-      - adult_poverty_rate
       - high_income_share
+      - low_income_share
     color: "#3b82f6"
     weight: 0.20
 
@@ -25,6 +24,7 @@ categories:
     indicators:
       - crime_per_1000
       - leefbaarometer_veiligheid
+      - geluidhinder_buren
     color: "#ef4444"
     weight: 0.15
 
@@ -38,6 +38,7 @@ categories:
       - afstand_bioscoop
       - afstand_zwembad
       - afstand_bibliotheek
+      - afstand_park
     color: "#22c55e"
     weight: 0.18
 
@@ -46,9 +47,9 @@ categories:
     indicators:
       - woz_value
       - gas_consumption
+      - electricity_consumption
       - bouwjaar_nieuw_pct
-      - corporatie_share
-      - huur_share
+      - zonnestroom
     color: "#f59e0b"
     weight: 0.17
 
@@ -66,16 +67,17 @@ categories:
     indicators:
       - leefbaarometer_score
       - leefbaarometer_fysiek
-      - no2_concentratie
-      - pm25_concentratie
+      - geluidhinder_weg
+      - tevredenheid_woonomgeving
     color: "#06b6d4"
     weight: 0.18
 
 # Scoring indicators
+# Column names match indicator keys from collectors (stored as flat columns in DataFrame)
 indicators:
   # === Inkomen & welvaart ===
   income_per_inhabitant:
-    column: GemiddeldInkomenPerInwoner_81
+    column: gem_inkomen
     higher_is_better: true
     weight: 0.12
     category: inkomen
@@ -84,7 +86,7 @@ indicators:
     description: Gemiddeld inkomen per inwoner (koopkracht)
 
   labour_participation:
-    column: NettoArbeidsparticipatie_3
+    column: netto_arbeidsparticipatie
     higher_is_better: true
     weight: 0.10
     category: inkomen
@@ -92,19 +94,8 @@ indicators:
     unit: percentage
     description: Hogere arbeidsparticipatie wijst op economisch actieve bevolking
 
-  adult_poverty_rate:
-    column: PersonenArmRelatief_22
-    scope: municipality
-    higher_is_better: false
-    weight: 0.07
-    category: inkomen
-    label: Armoede (relatief)
-    unit: percentage
-    description: Lager aandeel personen in armoede
-
   high_income_share:
     column: huishoudens_hoog_inkomen_pct
-    source: indicatoren
     higher_is_better: true
     weight: 0.04
     category: inkomen
@@ -112,10 +103,18 @@ indicators:
     unit: percentage
     description: Percentage huishoudens met een hoog inkomen
 
+  low_income_share:
+    column: huishoudens_laag_inkomen_pct
+    higher_is_better: false
+    weight: 0.04
+    category: inkomen
+    label: Huishoudens laag inkomen
+    unit: percentage
+    description: Percentage huishoudens met een laag inkomen
+
   # === Veiligheid ===
   crime_per_1000:
-    column: GeregistreerdeMisdrijvenPer1000Inw_3
-    scope: municipality
+    column: misdrijven_per_1000
     higher_is_better: false
     weight: 0.07
     category: veiligheid
@@ -125,7 +124,6 @@ indicators:
 
   leefbaarometer_veiligheid:
     column: leefbaarometer_veiligheid
-    source: model
     higher_is_better: true
     weight: 0.05
     category: veiligheid
@@ -133,10 +131,18 @@ indicators:
     unit: score
     description: Veiligheidsscore uit Leefbaarometer 3.0
 
+  geluidhinder_buren:
+    column: geluidhinder_buren_pct
+    higher_is_better: false
+    weight: 0.03
+    category: veiligheid
+    label: Geluidhinder buren
+    unit: percentage
+    description: Percentage ernstig gehinderd door burengeluid
+
   # === Voorzieningen ===
   afstand_huisarts:
-    column: afstand_huisartsenpraktijk
-    source: indicatoren
+    column: afstand_huisarts
     higher_is_better: false
     weight: 0.03
     category: voorzieningen
@@ -146,7 +152,6 @@ indicators:
 
   afstand_school:
     column: afstand_basisonderwijs
-    source: indicatoren
     higher_is_better: false
     weight: 0.02
     category: voorzieningen
@@ -155,8 +160,7 @@ indicators:
     description: Afstand tot dichtstbijzijnde basisschool
 
   afstand_supermarkt:
-    column: afstand_grote_supermarkt
-    source: indicatoren
+    column: afstand_supermarkt
     higher_is_better: false
     weight: 0.03
     category: voorzieningen
@@ -166,7 +170,6 @@ indicators:
 
   afstand_restaurant:
     column: afstand_restaurant
-    source: indicatoren
     higher_is_better: false
     weight: 0.01
     category: voorzieningen
@@ -176,7 +179,6 @@ indicators:
 
   afstand_bioscoop:
     column: afstand_bioscoop
-    source: indicatoren
     higher_is_better: false
     weight: 0.01
     category: voorzieningen
@@ -186,7 +188,6 @@ indicators:
 
   afstand_zwembad:
     column: afstand_zwembad
-    source: indicatoren
     higher_is_better: false
     weight: 0.01
     category: voorzieningen
@@ -196,7 +197,6 @@ indicators:
 
   afstand_bibliotheek:
     column: afstand_bibliotheek
-    source: indicatoren
     higher_is_better: false
     weight: 0.01
     category: voorzieningen
@@ -204,9 +204,18 @@ indicators:
     unit: km
     description: Afstand tot dichtstbijzijnde bibliotheek
 
+  afstand_park:
+    column: afstand_park
+    higher_is_better: false
+    weight: 0.02
+    category: voorzieningen
+    label: Afstand park
+    unit: km
+    description: Afstand tot dichtstbijzijnde park of plantsoen
+
   # === Woningkwaliteit ===
   woz_value:
-    column: GemiddeldeWOZWaardeVanWoningen_36
+    column: gem_woz_waarde
     higher_is_better: false
     weight: 0.08
     category: woningen
@@ -215,16 +224,16 @@ indicators:
     description: Gemiddelde WOZ-waarde als proxy voor woningkwaliteit
 
   gas_consumption:
-    column: GemiddeldAardgasverbruikTotaal_56
+    column: gem_gasverbruik
     higher_is_better: false
-    weight: 0.08
+    weight: 0.06
     category: woningen
     label: Gem. gasverbruik
     unit: m3
     description: Lager gasverbruik duidt op energiezuinigere woningen
 
   electricity_consumption:
-    column: GemiddeldeElektriciteitsleveringTotaal_48
+    column: gem_elektraverbruik
     higher_is_better: false
     weight: 0.04
     category: woningen
@@ -233,59 +242,26 @@ indicators:
     description: Lager elektriciteitsverbruik per woning
 
   bouwjaar_nieuw_pct:
-    column: bouwjaar_vanaf_2000_pct
-    source: indicatoren
+    column: bouwjaar_nieuw_pct
     higher_is_better: true
     weight: 0.02
     category: woningen
-    label: "Bouwjaar ≥ 2000"
+    label: Nieuwbouw (afgelopen 10 jaar)
     unit: percentage
-    description: Percentage woningen gebouwd na 2000
+    description: Percentage woningen gebouwd in afgelopen 10 jaar
 
-  corporatie_share:
-    numerator: EigendomWoningcorporatie_4
-    denominator: TotaleWoningvoorraad_1
-    scope: municipality
-    higher_is_better: true
-    weight: 0.03
-    category: woningen
-    label: Corporatiewoningen
-    unit: percentage
-    description: Hoger aandeel corporatiewoningen
-
-  huur_share:
-    numerator: TotaalHuurwoningen_3
-    denominator: TotaleWoningvoorraad_1
-    scope: municipality
+  zonnestroom:
+    column: woningen_met_zonnestroom
     higher_is_better: true
     weight: 0.02
     category: woningen
-    label: Huurwoningen
-    unit: percentage
-    description: Groot beschikbaar huursegment
-
-  solar_capacity:
-    column: OpgesteldVermogenVanZonnepanelen_6
-    higher_is_better: true
-    weight: 0.02
-    category: woningen
-    label: Zonnepaneel vermogen
-    unit: kW
-    description: Meer opgesteld PV-vermogen
-
-  solar_installations:
-    column: AantalInstallatiesBijWoningen_5
-    higher_is_better: true
-    weight: 0.01
-    category: woningen
-    label: Zonnepaneel installaties
+    label: Woningen met zonnestroom
     unit: aantal
-    description: Brede adoptie van zonnepanelen
+    description: Aantal woningen met zonnepanelen
 
   # === Bereikbaarheid ===
   cars_per_household:
-    numerator: PersonenautoSTotaal_109
-    denominator: HuishoudensTotaal_29
+    column: personenautos_per_huishouden
     higher_is_better: false
     weight: 0.03
     category: bereikbaarheid
@@ -295,17 +271,15 @@ indicators:
 
   afstand_treinstation:
     column: afstand_treinstation
-    source: indicatoren
     higher_is_better: false
     weight: 0.03
     category: bereikbaarheid
     label: Afstand treinstation
     unit: km
-    description: Afstand tot dichtstbijzijnde belangrijk overstapstation
+    description: Afstand tot dichtstbijzijnde treinstation
 
   afstand_oprit:
     column: afstand_oprit_hoofdverkeersweg
-    source: indicatoren
     higher_is_better: false
     weight: 0.02
     category: bereikbaarheid
@@ -325,7 +299,6 @@ indicators:
 
   leefbaarometer_fysiek:
     column: leefbaarometer_fysiek
-    source: model
     higher_is_better: true
     weight: 0.03
     category: leefbaarheid
@@ -333,41 +306,20 @@ indicators:
     unit: score
     description: Score fysieke omgeving uit Leefbaarometer
 
-  no2_concentratie:
-    column: no2_concentratie
-    source: indicatoren
+  geluidhinder_weg:
+    column: geluidhinder_weg_pct
     higher_is_better: false
-    weight: 0.02
+    weight: 0.03
     category: leefbaarheid
-    label: NO2 concentratie
-    unit: µg/m³
-    description: Lagere NO2 concentratie is beter voor gezondheid
+    label: Geluidhinder wegverkeer
+    unit: percentage
+    description: Percentage ernstig gehinderd door wegverkeer
 
-  pm25_concentratie:
-    column: pm25_concentratie
-    source: indicatoren
-    higher_is_better: false
-    weight: 0.02
-    category: leefbaarheid
-    label: Fijnstof PM2.5
-    unit: µg/m³
-    description: Lagere fijnstofconcentratie is beter voor gezondheid
-
-  # === Overig (niet in categorie, maar meegerekend) ===
-  house_price_level:
-    column: GemiddeldeVerkoopprijs_1
-    scope: municipality
-    higher_is_better: false
-    weight: 0.02
-    label: Gem. verkoopprijs
-    unit: euro
-    description: Lagere gemiddelde verkoopprijs kan wijzen op betaalbaarheid
-
-  wmo_clients_per_1000:
-    column: WmoClientenPer1000Inwoners_6
-    scope: municipality
-    higher_is_better: false
+  tevredenheid_woonomgeving:
+    column: tevredenheid_woonomgeving_pct
+    higher_is_better: true
     weight: 0.04
-    label: Wmo-cliënten per 1.000
-    unit: per_1000
-    description: Minder Wmo-cliënten per 1.000 inwoners
+    category: leefbaarheid
+    label: Tevredenheid woonomgeving
+    unit: percentage
+    description: Percentage tevreden met woonomgeving (RIVM)
