@@ -44,10 +44,18 @@ PACKAGES = {
 }
 
 # Mapping gemeentenamen (areas.yaml → DUO CKAN)
+# Let op: DUO gebruikt "S GRAVENHAGE" (zonder apostrof, met spatie)
 GEMEENTE_MAPPING = {
-    "Den Haag": "'S-GRAVENHAGE",
+    "Den Haag": "S GRAVENHAGE",
     "Leidschendam-Voorburg": "LEIDSCHENDAM-VOORBURG",
     "Rijswijk": "RIJSWIJK",
+}
+
+# Resource selectie per package: sommige packages hebben meerdere resources
+# (bevoegd gezag, hoofdvestigingen, alle vestigingen). We willen "alle vestigingen".
+RESOURCE_NAMES = {
+    "adressen_bo": "Alle vestigingen",
+    "adressen_vo": "vestigingen",
 }
 
 # PO adviescodes → categorie
@@ -201,7 +209,15 @@ class DUOSchoolCollector:
             resp.raise_for_status()
             result = resp.json()
             if result.get("success") and result.get("result", {}).get("resources"):
-                resource_id = result["result"]["resources"][0]["id"]
+                resources = result["result"]["resources"]
+                # Selecteer de juiste resource (bijv. "alle vestigingen" ipv "bevoegd gezag")
+                target_name = RESOURCE_NAMES.get(package_name, "").lower()
+                resource_id = resources[0]["id"]  # default: eerste
+                if target_name:
+                    for res in resources:
+                        if target_name in res.get("name", "").lower():
+                            resource_id = res["id"]
+                            break
                 self._resource_ids[package_name] = resource_id
                 self._save_to_cache(cache_key, resource_id)
                 logger.info(f"Resource ID voor {package_name}: {resource_id}")
@@ -247,6 +263,7 @@ class DUOSchoolCollector:
         filters: Optional[Dict[str, str]] = None,
         fields: Optional[List[str]] = None,
         cache_key: Optional[str] = None,
+        page_size: int = 500,
     ) -> List[Dict]:
         """Haal alle records op met paginatie, optioneel gefilterd."""
         if cache_key:
@@ -262,20 +279,22 @@ class DUOSchoolCollector:
 
         all_records = []
         offset = 0
-        limit = 500
 
         while True:
             records = self._datastore_search(
                 resource_id, filters=filters, fields=fields,
-                limit=limit, offset=offset,
+                limit=page_size, offset=offset,
             )
             if not records:
                 break
             all_records.extend(records)
-            logger.info(f"  {package_name}: {len(all_records)} records opgehaald...")
-            if len(records) < limit:
+            if len(all_records) % 10000 < page_size:
+                logger.info(f"  {package_name}: {len(all_records)} records opgehaald...")
+            if len(records) < page_size:
                 break
-            offset += limit
+            offset += page_size
+
+        logger.info(f"  {package_name}: {len(all_records)} records totaal")
 
         if cache_key and all_records:
             self._save_to_cache(cache_key, all_records)
@@ -318,23 +337,26 @@ class DUOSchoolCollector:
         records = self._fetch_all_records(
             PACKAGES["po_leerlingen"],
             cache_key=cache_key,
+            page_size=32000,
         )
 
         # Neem meest recente jaar per vestiging
         year_data: Dict[str, tuple] = {}  # brin6 → (jaar, aantal)
 
         for r in records:
-            brin = str(r.get("BRIN_NUMMER", "")).strip()
-            vest = str(r.get("VESTIGINGSNUMMER", "")).strip().zfill(2)
+            brin = str(r.get("INSTELLINGSCODE", "")).strip()
+            vest = str(r.get("VESTIGINGSCODE", "")).strip().zfill(2)
             brin6 = f"{brin}{vest}"
             if brin6 not in brins:
                 continue
 
-            jaar = r.get("PEILDATUM_LEERLINGEN", "") or r.get("PEILJAAR", "")
-            aantal = r.get("TOTAAL", 0) or r.get("LEERLINGEN", 0)
+            jaar = r.get("PEILJAAR", "")
+            aantal = r.get("AANTAL_LEERLINGEN", 0)
             try:
                 aantal = int(aantal)
             except (ValueError, TypeError):
+                continue
+            if aantal <= 0:
                 continue
 
             prev = year_data.get(brin6, ("", 0))
@@ -354,20 +376,21 @@ class DUOSchoolCollector:
         records = self._fetch_all_records(
             PACKAGES["po_adviezen"],
             cache_key=cache_key,
+            page_size=32000,
         )
 
         # Verzamel per vestiging per jaar
         vest_data: Dict[str, Dict[str, list]] = {}
 
         for r in records:
-            brin = str(r.get("BRIN_NUMMER", "")).strip()
-            vest = str(r.get("VESTIGINGSNUMMER", "")).strip().zfill(2)
+            brin = str(r.get("INSTELLINGSCODE", "")).strip()
+            vest = str(r.get("VESTIGINGSCODE", "")).strip().zfill(2)
             brin6 = f"{brin}{vest}"
             if brin6 not in brins:
                 continue
 
-            jaar = str(r.get("SCHOOLJAAR", "") or r.get("JAAR", ""))
-            advies = r.get("ADVIES", r.get("ADVIES_SCORE", None))
+            jaar = str(r.get("PEILJAAR", ""))
+            advies = r.get("ADVIES", None)
             try:
                 advies = int(advies)
             except (ValueError, TypeError):
@@ -393,19 +416,20 @@ class DUOSchoolCollector:
         records = self._fetch_all_records(
             PACKAGES["po_eindscores"],
             cache_key=cache_key,
+            page_size=32000,
         )
 
         vest_data: Dict[str, Dict[str, float]] = {}
 
         for r in records:
-            brin = str(r.get("BRIN_NUMMER", "") or r.get("INSTELLINGSCODE", "")).strip()
-            vest = str(r.get("VESTIGINGSNUMMER", "")).strip().zfill(2)
+            brin = str(r.get("INSTELLINGSCODE", "")).strip()
+            vest = str(r.get("VESTIGINGSCODE", "")).strip().zfill(2)
             brin6 = f"{brin}{vest}"
             if brin6 not in brins:
                 continue
 
-            jaar = str(r.get("SCHOOLJAAR", "") or r.get("JAAR", ""))
-            score = r.get("GEMIDDELDE_UITSLAG", r.get("GEM_SCORE", None))
+            jaar = str(r.get("PEILJAAR", ""))
+            score = r.get("GEMIDDELDE_UITSLAG", None)
             try:
                 score = float(score)
             except (ValueError, TypeError):
@@ -427,21 +451,28 @@ class DUOSchoolCollector:
         records = self._fetch_all_records(
             PACKAGES["vo_examens"],
             cache_key=cache_key,
+            page_size=32000,
         )
 
         vest_data: Dict[str, Dict[str, list]] = {}
 
         for r in records:
-            brin = str(r.get("BRIN_NUMMER", "") or r.get("INSTELLINGSCODE", "")).strip()
-            vest = str(r.get("VESTIGINGSNUMMER", "")).strip().zfill(2)
+            # VO examens: velden met spaties ("BRIN NUMMER", "BRINVESTIGINGSNUMMER")
+            brin_vest = str(r.get("BRINVESTIGINGSNUMMER", "")).strip()
+            if len(brin_vest) >= 6:
+                brin = brin_vest[:4]
+                vest = brin_vest[4:]
+            else:
+                brin = str(r.get("BRIN NUMMER", "")).strip()
+                vest = "00"
             brin6 = f"{brin}{vest}"
             if brin6 not in brins:
                 continue
 
-            jaar = str(r.get("SCHOOLJAAR", "") or r.get("JAAR", ""))
+            jaar = str(r.get("SCHOOLJAAR", ""))
 
-            slaag = r.get("SLAAGPERCENTAGE", r.get("GESLAAGD_PCT", None))
-            cijfer = r.get("GEM_CIJFER_CE", r.get("GEMIDDELD_CIJFER_CENTRAAL_EXAMEN", None))
+            slaag = r.get("SLAGINGSPERCENTAGE", None)
+            cijfer = r.get("GEMIDDELD CIJFER CENTRAAL EXAMEN", None)
 
             try:
                 slaag = float(slaag) if slaag is not None else None
@@ -485,12 +516,14 @@ class DUOSchoolCollector:
         vest_data: Dict[str, Dict[str, str]] = {}
 
         for r in records:
-            brin = str(r.get("BRIN_NUMMER", "") or r.get("INSTELLINGSCODE", "")).strip()
-            vest = str(r.get("VESTIGINGSNUMMER", "")).strip().zfill(2) if r.get("VESTIGINGSNUMMER") else "00"
+            # Inspectie: velden "BRIN", "Vestiging" (int), "EindoordeelKwaliteit", "Peildatum"
+            brin = str(r.get("BRIN", "")).strip()
+            vest_raw = r.get("Vestiging", 0)
+            vest = str(vest_raw).strip().zfill(2) if vest_raw is not None else "00"
             brin6 = f"{brin}{vest}"
 
-            jaar = str(r.get("JAAR_VAN_OORDEEL", "") or r.get("DATUM", ""))
-            oordeel = r.get("EINDBEOORDELING", r.get("EindoordeelKwaliteit", ""))
+            jaar = str(r.get("Peildatum", "") or r.get("VaststellingsdatumEindoordeelKwaliteit", ""))
+            oordeel = r.get("EindoordeelKwaliteit", "")
 
             if oordeel and isinstance(oordeel, str) and oordeel.strip():
                 vest_data.setdefault(brin6, {})[jaar] = oordeel.strip()
@@ -563,8 +596,10 @@ class DUOSchoolCollector:
         schools: Dict[str, SchoolInfo] = {}
 
         for r in po_records:
-            brin = str(r.get("BRIN_NUMMER", "") or r.get("INSTELLINGSCODE", "")).strip()
-            vest = str(r.get("VESTIGINGSNUMMER", "")).strip().zfill(2)
+            brin = str(r.get("INSTELLINGSCODE", "")).strip()
+            # VESTIGINGSCODE in locatiedata is volledige 6-char code (bijv. "00AP00")
+            vest_code = str(r.get("VESTIGINGSCODE", "")).strip()
+            vest = vest_code[4:] if len(vest_code) >= 6 else vest_code.zfill(2)
             if not brin:
                 continue
             brin6 = f"{brin}{vest}"
@@ -572,7 +607,7 @@ class DUOSchoolCollector:
             schools[brin6] = SchoolInfo(
                 brin=brin,
                 vestigingsnummer=vest,
-                naam=str(r.get("INSTELLINGSNAAM", "") or r.get("NAAM", "")).strip(),
+                naam=str(r.get("VESTIGINGSNAAM", "")).strip(),
                 type="basisonderwijs",
                 straat=str(r.get("STRAATNAAM", "") or "").strip(),
                 postcode=str(r.get("POSTCODE", "") or "").strip(),
@@ -582,8 +617,9 @@ class DUOSchoolCollector:
             )
 
         for r in vo_records:
-            brin = str(r.get("BRIN_NUMMER", "") or r.get("INSTELLINGSCODE", "")).strip()
-            vest = str(r.get("VESTIGINGSNUMMER", "")).strip().zfill(2)
+            brin = str(r.get("INSTELLINGSCODE", "")).strip()
+            vest_code = str(r.get("VESTIGINGSCODE", "")).strip()
+            vest = vest_code[4:] if len(vest_code) >= 6 else vest_code.zfill(2)
             if not brin:
                 continue
             brin6 = f"{brin}{vest}"
@@ -593,7 +629,7 @@ class DUOSchoolCollector:
             schools[brin6] = SchoolInfo(
                 brin=brin,
                 vestigingsnummer=vest,
-                naam=str(r.get("INSTELLINGSNAAM", "") or r.get("NAAM", "")).strip(),
+                naam=str(r.get("VESTIGINGSNAAM", "")).strip(),
                 type="voortgezet",
                 straat=str(r.get("STRAATNAAM", "") or "").strip(),
                 postcode=str(r.get("POSTCODE", "") or "").strip(),

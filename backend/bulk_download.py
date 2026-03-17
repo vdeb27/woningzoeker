@@ -252,7 +252,7 @@ def download_duo_scholen() -> int:
                 slagingspercentage=s.slagingspercentage,
                 gem_examencijfer=s.gem_examencijfer,
                 inspectie_oordeel=s.inspectie_oordeel,
-                updated_at=datetime.utcnow(),
+                updated_at=datetime.now(),
             ).on_conflict_do_update(
                 index_elements=["brin", "vestigingsnummer"],
                 set_={
@@ -272,7 +272,7 @@ def download_duo_scholen() -> int:
                     "slagingspercentage": s.slagingspercentage,
                     "gem_examencijfer": s.gem_examencijfer,
                     "inspectie_oordeel": s.inspectie_oordeel,
-                    "updated_at": datetime.utcnow(),
+                    "updated_at": datetime.now(),
                 },
             )
             result = db.execute(stmt)
