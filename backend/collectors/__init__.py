@@ -12,6 +12,7 @@ from collectors.cbs_buurt_collector import (
     BuurtData,
     create_cbs_buurt_collector,
     lookup_buurt_code_pdok,
+    geocode_address_pdok,
 )
 from collectors.cbs_nabijheid_collector import (
     CBSNabijheidCollector,
@@ -50,6 +51,12 @@ from collectors.miljoenhuizen_collector import (
     PrijsHistorieEntry,
     create_miljoenhuizen_collector,
 )
+from collectors.osm_overpass_collector import (
+    OSMOverpassCollector,
+    OverpassResult,
+    Voorziening,
+    create_osm_overpass_collector,
+)
 from collectors.duo_school_collector import (
     DUOSchoolCollector,
     SchoolInfo,
@@ -72,6 +79,7 @@ __all__ = [
     "BuurtData",
     "create_cbs_buurt_collector",
     "lookup_buurt_code_pdok",
+    "geocode_address_pdok",
     # CBS Nabijheid
     "CBSNabijheidCollector",
     "NabijheidResult",
@@ -105,6 +113,11 @@ __all__ = [
     "MiljoenhuizenWoning",
     "PrijsHistorieEntry",
     "create_miljoenhuizen_collector",
+    # OSM Overpass
+    "OSMOverpassCollector",
+    "OverpassResult",
+    "Voorziening",
+    "create_osm_overpass_collector",
     # DUO Scholen
     "DUOSchoolCollector",
     "SchoolInfo",
