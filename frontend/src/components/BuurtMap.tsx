@@ -33,37 +33,42 @@ function BuurtGeoJSONLayer({
 }) {
   const map = useMap()
   const layerRef = useRef<L.GeoJSON | null>(null)
+  const selectedRef = useRef<string[]>(selectedBuurten)
+  selectedRef.current = selectedBuurten
 
+  // Helper to compute style for a feature
+  const getStyle = (feature: GeoJSON.Feature | undefined, selected: string[]) => {
+    const p = feature?.properties
+    const isSelected = selected.includes(p?.code)
+
+    let fillColor: string
+    if (colorIndicator === 'score_totaal') {
+      fillColor = getScoreColor(p?.score_totaal)
+    } else {
+      const val = p?.indicator_value
+      if (val === null || val === undefined) {
+        fillColor = '#9ca3af'
+      } else {
+        fillColor = interpolateColor(val, minVal, maxVal)
+      }
+    }
+
+    return {
+      fillColor,
+      fillOpacity: isSelected ? 0.6 : 0.3,
+      color: isSelected ? '#1e40af' : fillColor,
+      weight: isSelected ? 4 : 2,
+    }
+  }
+
+  // Create/recreate layer when data or color settings change
   useEffect(() => {
-    // Remove previous layer
     if (layerRef.current) {
       map.removeLayer(layerRef.current)
     }
 
     const layer = L.geoJSON(data, {
-      style: (feature) => {
-        const p = feature?.properties
-        const isSelected = selectedBuurten.includes(p?.code)
-
-        let fillColor: string
-        if (colorIndicator === 'score_totaal') {
-          fillColor = getScoreColor(p?.score_totaal)
-        } else {
-          const val = p?.indicator_value
-          if (val === null || val === undefined) {
-            fillColor = '#9ca3af'
-          } else {
-            fillColor = interpolateColor(val, minVal, maxVal)
-          }
-        }
-
-        return {
-          fillColor,
-          fillOpacity: isSelected ? 0.6 : 0.3,
-          color: isSelected ? '#1e40af' : fillColor,
-          weight: isSelected ? 4 : 2,
-        }
-      },
+      style: (feature) => getStyle(feature, selectedRef.current),
       onEachFeature: (feature, featureLayer) => {
         const p = feature.properties
         if (!p) return
@@ -77,29 +82,51 @@ function BuurtGeoJSONLayer({
           indicatorText = `<br/>${colorIndicator}: ${p.indicator_value}`
         }
 
-        featureLayer.bindPopup(
+        const popupContent =
           `<strong>${p.naam}</strong><br/>` +
-            `Score: ${score} | Inkomen: ${inkomen} | Veiligheid: ${veiligheid}<br/>` +
-            `Mediaan: ${prijs}` +
-            indicatorText
-        )
+          `Score: ${score} | Inkomen: ${inkomen} | Veiligheid: ${veiligheid}<br/>` +
+          `Mediaan: ${prijs}` +
+          indicatorText
 
-        if (onBuurtClick) {
-          featureLayer.on('click', () => onBuurtClick(p.code))
-        }
+        featureLayer.bindPopup(popupContent, { autoPan: false })
+
+        featureLayer.on('click', (e) => {
+          if (onBuurtClick) {
+            onBuurtClick(p.code)
+          }
+          // Open popup after React re-render + DOM reflow settles
+          setTimeout(() => {
+            L.popup({ autoPan: false })
+              .setLatLng(e.latlng)
+              .setContent(popupContent)
+              .openOn(map)
+          }, 100)
+        })
       },
     })
 
     layer.addTo(map)
     layerRef.current = layer
-    console.log(`GeoJSON layer added to map: ${data.features.length} features`)
 
     return () => {
       if (layerRef.current) {
         map.removeLayer(layerRef.current)
       }
     }
-  }, [data, colorIndicator, selectedBuurten, minVal, maxVal, map, onBuurtClick])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, colorIndicator, minVal, maxVal, map, onBuurtClick])
+
+  // Update styles only when selection changes (without recreating the layer)
+  useEffect(() => {
+    if (!layerRef.current) return
+    layerRef.current.eachLayer((featureLayer) => {
+      const feature = (featureLayer as L.GeoJSON & { feature?: GeoJSON.Feature }).feature
+      if (feature) {
+        (featureLayer as L.Path).setStyle(getStyle(feature, selectedBuurten))
+      }
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedBuurten])
 
   return null
 }
@@ -158,9 +185,6 @@ export default function BuurtMap({
 
   if (geoError) {
     console.error('GeoJSON fetch error:', geoError)
-  }
-  if (buurtenGeoJSON) {
-    console.log(`GeoJSON loaded: ${buurtenGeoJSON.features?.length} features`)
   }
 
   const { data: woningenGeoJSON } = useQuery({
