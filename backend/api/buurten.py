@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from models import get_db, Buurt
@@ -12,7 +13,7 @@ from services.scoring import ScoringService
 
 router = APIRouter(prefix="/api/buurten", tags=["buurten"])
 
-# Standaard gemeenten voor de buurt-selector (CBS-namen)
+# Standaard gemeenten voor de buurt-selector (CBS-namen, used with ilike)
 DEFAULT_GEMEENTEN = ["'s-Gravenhage", "Leidschendam-Voorburg", "Rijswijk"]
 # Mapping van frontend-namen naar CBS-namen
 GEMEENTE_ALIAS = {"Den Haag": "'s-Gravenhage"}
@@ -140,7 +141,9 @@ def get_buurten_geojson(
         cbs_naam = GEMEENTE_ALIAS.get(gemeente, gemeente)
         query = query.filter(Buurt.gemeente_naam.ilike(f"%{cbs_naam}%"))
     else:
-        query = query.filter(Buurt.gemeente_naam.in_(DEFAULT_GEMEENTEN))
+        query = query.filter(or_(
+                *[Buurt.gemeente_naam.ilike(f"%{g}%") for g in DEFAULT_GEMEENTEN]
+            ))
 
     if min_score is not None:
         query = query.filter(Buurt.score_totaal >= min_score)
@@ -207,7 +210,9 @@ def list_buurten(
         cbs_naam = GEMEENTE_ALIAS.get(gemeente, gemeente)
         query = query.filter(Buurt.gemeente_naam.ilike(f"%{cbs_naam}%"))
     else:
-        query = query.filter(Buurt.gemeente_naam.in_(DEFAULT_GEMEENTEN))
+        query = query.filter(or_(
+                *[Buurt.gemeente_naam.ilike(f"%{g}%") for g in DEFAULT_GEMEENTEN]
+            ))
 
     if min_score is not None:
         query = query.filter(Buurt.score_totaal >= min_score)
