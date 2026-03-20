@@ -12,6 +12,11 @@ from services.scoring import ScoringService
 
 router = APIRouter(prefix="/api/buurten", tags=["buurten"])
 
+# Standaard gemeenten voor de buurt-selector (CBS-namen)
+DEFAULT_GEMEENTEN = ["'s-Gravenhage", "Leidschendam-Voorburg", "Rijswijk"]
+# Mapping van frontend-namen naar CBS-namen
+GEMEENTE_ALIAS = {"Den Haag": "'s-Gravenhage"}
+
 # Singleton scoring service for metadata
 _scoring_service = None
 
@@ -132,7 +137,10 @@ def get_buurten_geojson(
     query = db.query(Buurt).filter(Buurt.geometrie.isnot(None))
 
     if gemeente:
-        query = query.filter(Buurt.gemeente_naam.ilike(f"%{gemeente}%"))
+        cbs_naam = GEMEENTE_ALIAS.get(gemeente, gemeente)
+        query = query.filter(Buurt.gemeente_naam.ilike(f"%{cbs_naam}%"))
+    else:
+        query = query.filter(Buurt.gemeente_naam.in_(DEFAULT_GEMEENTEN))
 
     if min_score is not None:
         query = query.filter(Buurt.score_totaal >= min_score)
@@ -184,7 +192,7 @@ def get_buurten_geojson(
     }
 
 
-@router.get("/", response_model=List[BuurtSummary])
+@router.get("/", response_model=List[BuurtDetail])
 def list_buurten(
     gemeente: Optional[str] = Query(None, description="Filter by municipality"),
     min_score: Optional[float] = Query(None, ge=0, le=1, description="Minimum score"),
@@ -196,7 +204,10 @@ def list_buurten(
     query = db.query(Buurt)
 
     if gemeente:
-        query = query.filter(Buurt.gemeente_naam.ilike(f"%{gemeente}%"))
+        cbs_naam = GEMEENTE_ALIAS.get(gemeente, gemeente)
+        query = query.filter(Buurt.gemeente_naam.ilike(f"%{cbs_naam}%"))
+    else:
+        query = query.filter(Buurt.gemeente_naam.in_(DEFAULT_GEMEENTEN))
 
     if min_score is not None:
         query = query.filter(Buurt.score_totaal >= min_score)

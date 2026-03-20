@@ -1,6 +1,6 @@
-import { useMemo } from 'react'
+import { useMemo, useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { MapContainer, TileLayer, GeoJSON, Marker, Popup, CircleMarker, LayersControl } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Popup, CircleMarker, LayersControl, LayerGroup, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
@@ -14,6 +14,95 @@ L.Icon.Default.mergeOptions({
   iconUrl: new URL('leaflet/dist/images/marker-icon.png', import.meta.url).href,
   shadowUrl: new URL('leaflet/dist/images/marker-shadow.png', import.meta.url).href,
 })
+
+// Imperative GeoJSON layer component using useMap() to avoid React-Leaflet v4 rendering issues
+function BuurtGeoJSONLayer({
+  data,
+  colorIndicator,
+  selectedBuurten,
+  minVal,
+  maxVal,
+  onBuurtClick,
+}: {
+  data: GeoJSON.FeatureCollection
+  colorIndicator: string
+  selectedBuurten: string[]
+  minVal: number
+  maxVal: number
+  onBuurtClick?: (code: string) => void
+}) {
+  const map = useMap()
+  const layerRef = useRef<L.GeoJSON | null>(null)
+
+  useEffect(() => {
+    // Remove previous layer
+    if (layerRef.current) {
+      map.removeLayer(layerRef.current)
+    }
+
+    const layer = L.geoJSON(data, {
+      style: (feature) => {
+        const p = feature?.properties
+        const isSelected = selectedBuurten.includes(p?.code)
+
+        let fillColor: string
+        if (colorIndicator === 'score_totaal') {
+          fillColor = getScoreColor(p?.score_totaal)
+        } else {
+          const val = p?.indicator_value
+          if (val === null || val === undefined) {
+            fillColor = '#9ca3af'
+          } else {
+            fillColor = interpolateColor(val, minVal, maxVal)
+          }
+        }
+
+        return {
+          fillColor,
+          fillOpacity: isSelected ? 0.6 : 0.3,
+          color: isSelected ? '#1e40af' : fillColor,
+          weight: isSelected ? 4 : 2,
+        }
+      },
+      onEachFeature: (feature, featureLayer) => {
+        const p = feature.properties
+        if (!p) return
+        const score = p.score_totaal != null ? Math.round(p.score_totaal * 100) : '-'
+        const prijs = p.median_vraagprijs ? `€${Math.round(p.median_vraagprijs / 1000)}k` : '-'
+        const inkomen = p.score_inkomen != null ? Math.round(p.score_inkomen * 100) : '-'
+        const veiligheid = p.score_veiligheid != null ? Math.round(p.score_veiligheid * 100) : '-'
+
+        let indicatorText = ''
+        if (colorIndicator !== 'score_totaal' && p.indicator_value != null) {
+          indicatorText = `<br/>${colorIndicator}: ${p.indicator_value}`
+        }
+
+        featureLayer.bindPopup(
+          `<strong>${p.naam}</strong><br/>` +
+            `Score: ${score} | Inkomen: ${inkomen} | Veiligheid: ${veiligheid}<br/>` +
+            `Mediaan: ${prijs}` +
+            indicatorText
+        )
+
+        if (onBuurtClick) {
+          featureLayer.on('click', () => onBuurtClick(p.code))
+        }
+      },
+    })
+
+    layer.addTo(map)
+    layerRef.current = layer
+    console.log(`GeoJSON layer added to map: ${data.features.length} features`)
+
+    return () => {
+      if (layerRef.current) {
+        map.removeLayer(layerRef.current)
+      }
+    }
+  }, [data, colorIndicator, selectedBuurten, minVal, maxVal, map, onBuurtClick])
+
+  return null
+}
 
 interface BuurtMapProps {
   gemeente?: string
@@ -57,7 +146,7 @@ export default function BuurtMap({
   selectedBuurten = [],
   onBuurtClick,
 }: BuurtMapProps) {
-  const { data: buurtenGeoJSON } = useQuery({
+  const { data: buurtenGeoJSON, error: geoError } = useQuery({
     queryKey: ['buurten-geojson', gemeente, minScore, colorIndicator],
     queryFn: () =>
       fetchBuurtenGeoJSON({
@@ -66,6 +155,13 @@ export default function BuurtMap({
         indicator: colorIndicator !== 'score_totaal' ? colorIndicator : undefined,
       }),
   })
+
+  if (geoError) {
+    console.error('GeoJSON fetch error:', geoError)
+  }
+  if (buurtenGeoJSON) {
+    console.log(`GeoJSON loaded: ${buurtenGeoJSON.features?.length} features`)
+  }
 
   const { data: woningenGeoJSON } = useQuery({
     queryKey: ['woningen-geojson'],
@@ -91,19 +187,6 @@ export default function BuurtMap({
     if (values.length === 0) return { minVal: 0, maxVal: 1 }
     return { minVal: Math.min(...values), maxVal: Math.max(...values) }
   }, [buurtenGeoJSON, colorIndicator])
-
-  // Key to force GeoJSON re-render on data change
-  const geoJsonKey = useMemo(
-    () =>
-      JSON.stringify({
-        gemeente,
-        minScore,
-        colorIndicator,
-        selectedBuurten,
-        count: buurtenGeoJSON?.features?.length,
-      }),
-    [gemeente, minScore, colorIndicator, selectedBuurten, buurtenGeoJSON]
-  )
 
   const woningMarkers = useMemo(() => {
     if (!woningenGeoJSON?.features) return []
@@ -144,66 +227,20 @@ export default function BuurtMap({
           maxZoom={19}
         />
 
-        {buurtenGeoJSON && (
-          <GeoJSON
-            key={geoJsonKey}
+        {buurtenGeoJSON && buurtenGeoJSON.features && buurtenGeoJSON.features.length > 0 && (
+          <BuurtGeoJSONLayer
             data={buurtenGeoJSON as GeoJSON.FeatureCollection}
-            style={(feature) => {
-              const p = feature?.properties
-              const isSelected = selectedBuurten.includes(p?.code as string)
-
-              let fillColor: string
-              if (colorIndicator === 'score_totaal') {
-                fillColor = getScoreColor(p?.score_totaal as number)
-              } else {
-                const val = p?.indicator_value as number
-                if (val === null || val === undefined) {
-                  fillColor = '#9ca3af'
-                } else {
-                  fillColor = interpolateColor(val, minVal, maxVal)
-                }
-              }
-
-              return {
-                fillColor,
-                fillOpacity: isSelected ? 0.6 : 0.3,
-                color: isSelected ? '#1e40af' : fillColor,
-                weight: isSelected ? 4 : 2,
-              }
-            }}
-            onEachFeature={(feature, layer) => {
-              const p = feature.properties
-              const score = p.score_totaal != null ? Math.round((p.score_totaal as number) * 100) : '-'
-              const prijs = p.median_vraagprijs ? formatPrijs(p.median_vraagprijs as number) : '-'
-
-              let indicatorText = ''
-              if (colorIndicator !== 'score_totaal' && p.indicator_value != null) {
-                indicatorText = `<br/>${colorIndicator}: ${p.indicator_value}`
-              }
-
-              // Tooltip with key stats
-              const inkomen = p.score_inkomen != null ? Math.round((p.score_inkomen as number) * 100) : '-'
-              const veiligheid = p.score_veiligheid != null ? Math.round((p.score_veiligheid as number) * 100) : '-'
-
-              layer.bindPopup(
-                `<strong>${p.naam}</strong><br/>` +
-                  `Score: ${score} | Inkomen: ${inkomen} | Veiligheid: ${veiligheid}<br/>` +
-                  `Mediaan: ${prijs}` +
-                  indicatorText
-              )
-
-              if (onBuurtClick) {
-                layer.on('click', () => {
-                  onBuurtClick(p.code as string)
-                })
-              }
-            }}
+            colorIndicator={colorIndicator}
+            selectedBuurten={selectedBuurten}
+            minVal={minVal}
+            maxVal={maxVal}
+            onBuurtClick={onBuurtClick}
           />
         )}
 
         <LayersControl position="topright">
           <LayersControl.Overlay name="Woningen" checked>
-            <>{woningMarkers.map((marker, idx) => {
+            <LayerGroup>{woningMarkers.map((marker, idx) => {
               const p = marker.properties
               return (
                 <Marker key={`w-${idx}`} position={marker.position}>
@@ -216,11 +253,11 @@ export default function BuurtMap({
                   </Popup>
                 </Marker>
               )
-            })}</>
+            })}</LayerGroup>
           </LayersControl.Overlay>
 
           <LayersControl.Overlay name="Basisscholen">
-            <>{schoolMarkers
+            <LayerGroup>{schoolMarkers
               .filter((m) => m.properties.type === 'basisonderwijs')
               .map((marker, idx) => {
                 const p = marker.properties
@@ -253,11 +290,11 @@ export default function BuurtMap({
                     </Popup>
                   </CircleMarker>
                 )
-              })}</>
+              })}</LayerGroup>
           </LayersControl.Overlay>
 
           <LayersControl.Overlay name="Middelbare scholen">
-            <>{schoolMarkers
+            <LayerGroup>{schoolMarkers
               .filter((m) => m.properties.type === 'voortgezet')
               .map((marker, idx) => {
                 const p = marker.properties
@@ -294,7 +331,7 @@ export default function BuurtMap({
                     </Popup>
                   </CircleMarker>
                 )
-              })}</>
+              })}</LayerGroup>
           </LayersControl.Overlay>
         </LayersControl>
       </MapContainer>
