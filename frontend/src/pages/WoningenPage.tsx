@@ -123,6 +123,7 @@ export default function WoningenPage() {
     mutationFn: (woningId: number) => deleteWoning(woningId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['woningen'] })
+      queryClient.invalidateQueries({ queryKey: ['woningen-geojson'] })
       queryClient.invalidateQueries({ queryKey: ['watchlist'] })
     },
   })
