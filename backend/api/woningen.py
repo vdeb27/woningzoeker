@@ -1,6 +1,5 @@
 """Property (woning) listing API routes."""
 
-import re as _re
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -65,55 +64,22 @@ class WoningDetail(WoningSummary):
 def get_woningen_geojson(
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    """Get active properties as GeoJSON with coordinates from PDOK."""
-    import requests as _requests
-
+    """Get active properties as GeoJSON using stored coordinates."""
     woningen = (
         db.query(Woning)
-        .filter(Woning.status == "active")
+        .filter(
+            Woning.status == "active",
+            Woning.latitude.isnot(None),
+            Woning.longitude.isnot(None),
+        )
         .all()
     )
 
     features = []
     for woning in woningen:
-        if not woning.postcode or not woning.adres:
-            continue
-
-        # Extract huisnummer from adres
-        match = _re.search(r"(\d+)", woning.adres)
-        if not match:
-            continue
-        huisnummer = match.group(1)
-
-        # Geocode via PDOK Locatieserver
-        try:
-            resp = _requests.get(
-                "https://api.pdok.nl/bzk/locatieserver/search/v3_1/free",
-                params={"q": f"{woning.postcode} {huisnummer}", "rows": 1},
-                timeout=5,
-            )
-            resp.raise_for_status()
-            docs = resp.json().get("response", {}).get("docs", [])
-            if not docs:
-                continue
-
-            centroide = docs[0].get("centroide_ll")
-            if not centroide:
-                continue
-
-            # Parse "POINT(lon lat)"
-            coord_match = _re.match(r"POINT\(([\d.]+)\s+([\d.]+)\)", centroide)
-            if not coord_match:
-                continue
-
-            lon = float(coord_match.group(1))
-            lat = float(coord_match.group(2))
-        except Exception:
-            continue
-
         features.append({
             "type": "Feature",
-            "geometry": {"type": "Point", "coordinates": [lon, lat]},
+            "geometry": {"type": "Point", "coordinates": [woning.longitude, woning.latitude]},
             "properties": {
                 "id": woning.id,
                 "adres": woning.adres,
@@ -181,3 +147,18 @@ def get_woning(woning_id: int, db: Session = Depends(get_db)):
     if not woning:
         raise HTTPException(status_code=404, detail="Woning niet gevonden")
     return woning
+
+
+@router.delete("/{woning_id}")
+def delete_woning(woning_id: int, db: Session = Depends(get_db)):
+    """Delete a property and its watchlist entries."""
+    from models import WatchlistItem
+
+    woning = db.query(Woning).filter(Woning.id == woning_id).first()
+    if not woning:
+        raise HTTPException(status_code=404, detail="Woning niet gevonden")
+    # Remove associated watchlist entries
+    db.query(WatchlistItem).filter(WatchlistItem.woning_id == woning_id).delete()
+    db.delete(woning)
+    db.commit()
+    return {"ok": True}

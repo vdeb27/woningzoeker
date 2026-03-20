@@ -27,6 +27,22 @@ from models import Buurt, Woning, WatchlistItem, Prijshistorie, School  # noqa: 
 async def lifespan(app: FastAPI):
     """Initialize database on startup."""
     init_db()
+
+    # Migrate: add lat/lon columns if missing + remove sample data
+    from sqlalchemy import text, inspect
+    from models.database import engine
+
+    with engine.connect() as conn:
+        inspector = inspect(engine)
+        columns = [c["name"] for c in inspector.get_columns("woningen")]
+        if "latitude" not in columns:
+            conn.execute(text("ALTER TABLE woningen ADD COLUMN latitude REAL"))
+        if "longitude" not in columns:
+            conn.execute(text("ALTER TABLE woningen ADD COLUMN longitude REAL"))
+        # Remove hardcoded sample woningen
+        conn.execute(text("DELETE FROM woningen WHERE funda_id LIKE 'sample_%'"))
+        conn.commit()
+
     yield
 
 

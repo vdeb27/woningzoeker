@@ -25,6 +25,10 @@ class Woning(Base):
     plaats = Column(String(100))
     buurt_code = Column(String(20), ForeignKey("buurten.code"), index=True)
 
+    # Geocoordinates
+    latitude = Column(Float)
+    longitude = Column(Float)
+
     # Basic info
     vraagprijs = Column(Integer, index=True)
     woonoppervlakte = Column(Integer)
