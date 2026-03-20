@@ -383,6 +383,15 @@ export async function fetchWoningWaarde(
   return response.json()
 }
 
+export async function deleteWoning(id: number): Promise<void> {
+  const response = await fetch(`${API_BASE}/woningen/${id}`, {
+    method: 'DELETE',
+  })
+  if (!response.ok) {
+    throw new Error('Verwijderen mislukt')
+  }
+}
+
 // Buurten
 export async function fetchBuurten(params?: {
   gemeente?: string

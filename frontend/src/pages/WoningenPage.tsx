@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { fetchWoningen, addToWatchlist, Woning, formatPrijs } from '../services/api'
+import { fetchWoningen, addToWatchlist, deleteWoning, Woning, formatPrijs } from '../services/api'
 
-function WoningCard({ woning, onAddToWatchlist }: {
+function WoningCard({ woning, onAddToWatchlist, onDelete }: {
   woning: Woning
   onAddToWatchlist: (id: number) => void
+  onDelete: (id: number) => void
 }) {
   const [added, setAdded] = useState(false)
 
@@ -84,6 +85,12 @@ function WoningCard({ woning, onAddToWatchlist }: {
               Funda
             </a>
           )}
+          <button
+            onClick={() => onDelete(woning.id)}
+            className="text-sm px-3 py-1 rounded text-red-600 hover:bg-red-50 transition-colors"
+          >
+            Verwijder
+          </button>
         </div>
       </div>
     </div>
@@ -112,8 +119,20 @@ export default function WoningenPage() {
     },
   })
 
+  const deleteMutation = useMutation({
+    mutationFn: (woningId: number) => deleteWoning(woningId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['woningen'] })
+      queryClient.invalidateQueries({ queryKey: ['watchlist'] })
+    },
+  })
+
   const handleAddToWatchlist = (woningId: number) => {
     watchlistMutation.mutate(woningId)
+  }
+
+  const handleDelete = (woningId: number) => {
+    deleteMutation.mutate(woningId)
   }
 
   return (
@@ -205,7 +224,8 @@ export default function WoningenPage() {
 
       {woningen && woningen.length === 0 && (
         <div className="text-center py-12 text-gray-500">
-          Geen woningen gevonden met deze filters.
+          <p>Nog geen woningen opgeslagen.</p>
+          <p className="mt-1 text-sm">Zoek een woning op via de <a href="/woningwaarde" className="text-primary-600 hover:underline">Woningwaarde</a> pagina om deze hier te bewaren.</p>
         </div>
       )}
 
@@ -218,6 +238,7 @@ export default function WoningenPage() {
                 key={woning.id}
                 woning={woning}
                 onAddToWatchlist={handleAddToWatchlist}
+                onDelete={handleDelete}
               />
             ))}
           </div>
