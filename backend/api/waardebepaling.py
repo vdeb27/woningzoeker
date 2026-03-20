@@ -14,7 +14,7 @@ from collectors.energielabel_collector import create_energielabel_collector
 from collectors.kadaster_collector import create_kadaster_collector, TransactionRecord
 from collectors.miljoenhuizen_collector import create_miljoenhuizen_collector, MiljoenhuizenWoning
 from collectors.cbs_market_collector import create_cbs_market_collector
-from collectors.cbs_buurt_collector import create_cbs_buurt_collector, lookup_buurt_code_pdok
+from collectors.cbs_buurt_collector import create_cbs_buurt_collector, lookup_buurt_code_pdok, geocode_address_pdok
 from collectors.bag_collector import BagClient
 from datetime import datetime, timedelta
 from sqlalchemy import and_
@@ -221,6 +221,9 @@ class EnhancedWaardebepalingResponse(BaseModel):
 
     # Data sources used
     data_bronnen: List[str] = []
+
+    # Saved woning reference
+    woning_id: Optional[int] = None
 
 
 # ============================================================================
@@ -819,6 +822,89 @@ def bereken_waarde_voor_adres(
     if miljoenhuizen_verkopen:
         data_bronnen.append("Miljoenhuizen.nl")
 
+    # --- Save/update woning in database ---
+    saved_woning_id = None
+    try:
+        pc_normalized = request.postcode.replace(" ", "").upper()
+        pc6 = pc_normalized[:6]
+
+        # Geocode for lat/lon
+        geo = geocode_address_pdok(pc_normalized, request.huisnummer)
+
+        # Build short adres (without city) for dedup
+        adres_short = adres.split(",")[0].strip() if adres and "," in adres else adres
+
+        # Dedup: find existing woning by pc6 + adres
+        existing = (
+            db.query(Woning)
+            .filter(Woning.pc6 == pc6)
+            .all()
+        )
+        matched = None
+        for w in existing:
+            w_adres_short = w.adres.split(",")[0].strip() if w.adres and "," in w.adres else w.adres
+            if w_adres_short == adres_short:
+                matched = w
+                break
+
+        if matched:
+            # Update existing woning
+            matched.adres = adres or matched.adres
+            matched.plaats = woonplaats or matched.plaats
+            matched.vraagprijs = request.vraagprijs or matched.vraagprijs
+            matched.woonoppervlakte = woonoppervlakte or matched.woonoppervlakte
+            matched.woningtype = request.woningtype or matched.woningtype
+            matched.energielabel = energielabel or matched.energielabel
+            matched.bouwjaar = bouwjaar or matched.bouwjaar
+            matched.buurt_code = buurt_code or matched.buurt_code
+            matched.geschatte_waarde_laag = valuation.waarde_laag
+            matched.geschatte_waarde_hoog = valuation.waarde_hoog
+            matched.waarde_confidence = valuation.confidence
+            matched.biedadvies = valuation.bied_advies.value
+            if geo:
+                matched.latitude = geo["lat"]
+                matched.longitude = geo["lng"]
+            if bag_data:
+                matched.bag_oppervlakte = safe_int(bag_data.get("oppervlakte"))
+                matched.bag_bouwjaar = safe_int(bag_data.get("pand_bouwjaar"))
+                matched.bag_gebruiksdoel = bag_data.get("gebruiksdoel")
+            matched.updated_at = datetime.now()
+            matched.enriched_at = datetime.now()
+            db.commit()
+            saved_woning_id = matched.id
+        else:
+            # Create new woning
+            woning = Woning(
+                adres=adres or f"{pc_normalized} {request.huisnummer}",
+                postcode=request.postcode,
+                pc6=pc6,
+                plaats=woonplaats,
+                buurt_code=buurt_code,
+                vraagprijs=request.vraagprijs,
+                woonoppervlakte=woonoppervlakte,
+                woningtype=request.woningtype,
+                bouwjaar=bouwjaar,
+                energielabel=energielabel,
+                status="active",
+                datum_aangemeld=datetime.now(),
+                latitude=geo["lat"] if geo else None,
+                longitude=geo["lng"] if geo else None,
+                bag_oppervlakte=safe_int(bag_data.get("oppervlakte")) if bag_data else None,
+                bag_bouwjaar=safe_int(bag_data.get("pand_bouwjaar")) if bag_data else None,
+                bag_gebruiksdoel=bag_data.get("gebruiksdoel") if bag_data else None,
+                geschatte_waarde_laag=valuation.waarde_laag,
+                geschatte_waarde_hoog=valuation.waarde_hoog,
+                waarde_confidence=valuation.confidence,
+                biedadvies=valuation.bied_advies.value,
+                enriched_at=datetime.now(),
+            )
+            db.add(woning)
+            db.commit()
+            db.refresh(woning)
+            saved_woning_id = woning.id
+    except Exception:
+        db.rollback()
+
     return EnhancedWaardebepalingResponse(
         postcode=request.postcode,
         huisnummer=request.huisnummer,
@@ -884,4 +970,5 @@ def bereken_waarde_voor_adres(
         buurt_koopwoningen_pct=buurt_data.koopwoningen_pct if buurt_data else None,
         buurt_gem_inkomen=buurt_data.gem_inkomen if buurt_data else None,
         data_bronnen=data_bronnen,
+        woning_id=saved_woning_id,
     )
