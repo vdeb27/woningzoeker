@@ -213,7 +213,7 @@ def write_to_database(scored_df: pd.DataFrame):
             buurt.woz_waarde = row.get("gem_woz_waarde")
             buurt.gasverbruik = _safe_float(ind.get("gem_gasverbruik"))
             buurt.elektraverbruik = _safe_float(ind.get("gem_elektraverbruik"))
-            buurt.arbeidsparticipatie = _safe_float(ind.get("arbeidsparticipatie"))
+            buurt.arbeidsparticipatie = _safe_float(ind.get("netto_arbeidsparticipatie")) or _safe_float(ind.get("arbeidsparticipatie"))
 
             # Extended indicators (JSON)
             buurt.indicatoren = ind if ind else None
