@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   berekenWaardeVoorAdres,
   EnhancedWaardebepalingRequest,
@@ -448,8 +448,14 @@ export default function WaardebepalingPage() {
     setTimeout(() => setCopied(false), 2000)
   }
 
+  const queryClient = useQueryClient()
+
   const mutation = useMutation({
     mutationFn: berekenWaardeVoorAdres,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['woningen'] })
+      queryClient.invalidateQueries({ queryKey: ['woningen-geojson'] })
+    },
   })
 
   const handleSubmit = (e: React.FormEvent) => {
