@@ -21,8 +21,61 @@ import requests
 # CBS OData API
 CBS_API_BASE = "https://opendata.cbs.nl/ODataApi/odata"
 DATASET_KERNCIJFERS = "86165NED"  # Kerncijfers wijken en buurten 2025
+DATASET_FALLBACK = "85618NED"  # Kerncijfers wijken en buurten 2024 (meest complete recente data)
 
 # Cache settings
+# Fallback column mapping for 2024 dataset (85618NED)
+# The 2025 dataset is missing socio-economic data; 2024 has it with different suffixes
+FALLBACK_COLUMNS = {
+    # Energie
+    "gem_elektraverbruik": "GemiddeldeElektriciteitsleveringTotaal_48",
+    "gem_gasverbruik": "GemiddeldAardgasverbruikTotaal_56",
+    "stadsverwarming_pct": "PercentageWoningenMetStadsverwarming_64",
+    # Onderwijs
+    "leerlingen_po": "LeerlingenPo_65",
+    "leerlingen_vo": "LeerlingenVoInclVavo_66",
+    "studenten_mbo": "StudentenMboExclExtranei_67",
+    "studenten_hbo": "StudentenHbo_68",
+    "studenten_wo": "StudentenWo_69",
+    # Arbeid
+    "netto_arbeidsparticipatie": "Nettoarbeidsparticipatie_74",
+    "werknemers_pct": "PercentageWerknemers_75",
+    "zelfstandigen_pct": "PercentageZelfstandigen_78",
+    # Inkomen
+    "aantal_inkomensontvangers": "AantalInkomensontvangers_79",
+    "gem_inkomen_ontvanger": "GemiddeldInkomenPerInkomensontvanger_80",
+    "gem_inkomen": "GemiddeldInkomenPerInwoner_81",
+    "personen_laagste_inkomen_pct": "k_40PersonenMetLaagsteInkomen_82",
+    "gem_gestandaardiseerd_inkomen": "GemGestandaardiseerdInkomenVanHuish_84",
+    "huishoudens_laag_inkomen_pct": "HuishoudensMetEenLaagInkomen_87",
+    "mediaan_vermogen": "MediaanVermogenVanParticuliereHuish_91",
+    # Uitkeringen
+    "bijstandsuitkeringen_per_1000": "PersonenPerSoortUitkeringBijstand_92",
+    "ao_uitkeringen_per_1000": "PersonenPerSoortUitkeringAO_93",
+    "ww_uitkeringen_per_1000": "PersonenPerSoortUitkeringWW_94",
+    "aow_uitkeringen_per_1000": "PersonenPerSoortUitkeringAOW_95",
+    # Jeugdzorg & WMO
+    "jongeren_jeugdzorg": "JongerenMetJeugdzorgInNatura_96",
+    "jongeren_jeugdzorg_pct": "PercentageJongerenMetJeugdzorg_97",
+    "wmo_clienten": "WmoClienten_98",
+    "wmo_clienten_relatief": "WmoClientenRelatief_99",
+    # Bedrijven
+    "bedrijfsvestigingen_totaal": "BedrijfsvestigingenTotaal_100",
+    "bedrijven_landbouw": "ALandbouwBosbouwEnVisserij_101",
+    "bedrijven_nijverheid": "BFNijverheidEnEnergie_102",
+    "bedrijven_handel_horeca": "GIHandelEnHoreca_103",
+    "bedrijven_vervoer_ict": "HJVervoerInformatieEnCommunicatie_104",
+    "bedrijven_financieel": "KLFinancieleDienstenOnroerendGoed_105",
+    "bedrijven_zakelijk": "MNZakelijkeDienstverlening_106",
+    "bedrijven_overheid_onderwijs_zorg": "OQOverheidOnderwijsEnZorg_107",
+    "bedrijven_cultuur_recreatie": "RUCultuurRecreatieOverigeDiensten_108",
+    # Geboorte & Sterfte
+    "geboorte_totaal": "GeboorteTotaal_25",
+    "geboorte_relatief": "GeboorteRelatief_26",
+    "sterfte_totaal": "SterfteTotaal_27",
+    "sterfte_relatief": "SterfteRelatief_28",
+}
+
 CACHE_DIR = Path(__file__).parent.parent.parent / "data" / "cache"
 CACHE_DURATION_SECONDS = 30 * 24 * 60 * 60  # 30 days (yearly dataset)
 
@@ -364,8 +417,71 @@ class CBSBuurtCollector:
 
             self._buurt_data[buurt_code] = buurt
 
+        # Fallback: fill missing income/gas/employment from 2022 dataset
+        self._fill_from_fallback()
+
         self._loaded = True
         self._save_to_cache()
+
+    def _fill_from_fallback(self) -> None:
+        """Fill missing income/gas/employment data from older CBS dataset."""
+        import cbsodata
+
+        # Check if fallback is needed
+        sample = next(iter(self._buurt_data.values()), None)
+        if sample and sample.gem_inkomen is not None:
+            return  # Primary dataset already has this data
+
+        print(f"  Fallback: inkomen/gas/arbeid ophalen uit {DATASET_FALLBACK}...")
+        select_cols = ["Codering_3"] + list(FALLBACK_COLUMNS.values())
+
+        try:
+            records = cbsodata.get_data(DATASET_FALLBACK, select=select_cols)
+        except Exception as exc:
+            print(f"  Fallback dataset laden mislukt: {exc}")
+            return
+
+        filled = 0
+        for record in records:
+            buurt_code = str(record.get("Codering_3", "")).strip()
+            buurt = self._buurt_data.get(buurt_code)
+            if not buurt:
+                continue
+
+            # Fill core fields if missing
+            if buurt.gem_inkomen is None:
+                raw = record.get(FALLBACK_COLUMNS["gem_inkomen"])
+                if raw is not None:
+                    try:
+                        buurt.gem_inkomen = int(float(raw) * 1000)
+                    except (ValueError, TypeError):
+                        pass
+
+            if buurt.huishoudens_laag_inkomen_pct is None:
+                raw = record.get(FALLBACK_COLUMNS.get("huishoudens_laag_inkomen_pct", ""))
+                if raw is not None:
+                    try:
+                        buurt.huishoudens_laag_inkomen_pct = float(raw)
+                    except (ValueError, TypeError):
+                        pass
+
+            # Fill indicatoren if missing
+            if buurt.indicatoren is None:
+                buurt.indicatoren = {}
+
+            for key, cbs_col in FALLBACK_COLUMNS.items():
+                if key in ("gem_inkomen", "huishoudens_laag_inkomen_pct"):
+                    continue  # Already handled above as core fields
+                if key not in buurt.indicatoren or buurt.indicatoren[key] is None:
+                    raw = record.get(cbs_col)
+                    if raw is not None:
+                        try:
+                            buurt.indicatoren[key] = float(raw)
+                            filled += 1
+                        except (ValueError, TypeError):
+                            pass
+
+        print(f"  Fallback: {filled} ontbrekende waarden ingevuld")
 
     def _ensure_loaded(self) -> None:
         """Ensure buurt data is loaded (from cache or CBS)."""
