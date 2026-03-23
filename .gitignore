@@ -38,8 +38,8 @@ frontend/dist/
 .DS_Store
 Thumbs.db
 
-# Data (optional - keep if you want to track database)
-# data/woningzoeker.db
+# Data
+data/woningzoeker.db
 data/cache/
 
 # Logs

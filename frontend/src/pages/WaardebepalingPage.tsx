@@ -4,6 +4,7 @@ import {
   berekenWaardeVoorAdres,
   EnhancedWaardebepalingRequest,
   EnhancedWaardebepalingResponse,
+  MonumentResponse,
   formatPrijs,
   formatM2Prijs,
 } from '../services/api'
@@ -92,6 +93,87 @@ function DataBronnenFooter({ bronnen }: { bronnen: string[] }) {
   )
 }
 
+function MonumentPanel({ monument }: { monument: MonumentResponse }) {
+  if (!monument.heeft_monumentstatus) return null
+
+  const items: { label: string; detail: string; url?: string }[] = []
+
+  if (monument.rijksmonument?.is_monument) {
+    items.push({
+      label: 'Rijksmonument',
+      detail: monument.rijksmonument.omschrijving
+        ? `Nr. ${monument.rijksmonument.monumentnummer} — ${monument.rijksmonument.omschrijving}`
+        : `Nr. ${monument.rijksmonument.monumentnummer}`,
+      url: monument.rijksmonument.url,
+    })
+  }
+
+  if (monument.gemeentelijk_monument?.is_monument) {
+    items.push({
+      label: 'Gemeentelijk monument',
+      detail: monument.gemeentelijk_monument.omschrijving
+        || `Gemeente ${monument.gemeentelijk_monument.gemeente}`,
+    })
+  }
+
+  if (monument.beschermd_gezicht?.in_beschermd_gezicht) {
+    const niveau = monument.beschermd_gezicht.niveau === 'gemeentelijk' ? 'Gemeentelijk' : 'Rijks'
+    const type = monument.beschermd_gezicht.type === 'dorpsgezicht'
+      ? 'beschermd dorpsgezicht'
+      : 'beschermd stadsgezicht'
+    items.push({
+      label: `${niveau} ${type}`,
+      detail: monument.beschermd_gezicht.naam || '',
+    })
+  }
+
+  if (monument.unesco?.in_unesco) {
+    items.push({
+      label: 'UNESCO Werelderfgoed',
+      detail: monument.unesco.naam || '',
+    })
+  }
+
+  return (
+    <div className="bg-amber-50 border border-amber-300 rounded-lg p-4">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-200 text-amber-900">
+          Monument
+        </span>
+        <span className="text-sm text-amber-700 font-medium">
+          Deze woning heeft een monumentstatus
+        </span>
+      </div>
+      <div className="space-y-2">
+        {items.map((item, idx) => (
+          <div key={idx} className="text-sm">
+            <div className="font-medium text-amber-900">{item.label}</div>
+            <div className="text-amber-700">
+              {item.detail}
+              {item.url && (
+                <>
+                  {' — '}
+                  <a
+                    href={item.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline hover:text-amber-900"
+                  >
+                    Bekijk in register
+                  </a>
+                </>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="text-xs text-amber-600 mt-2">
+        Let op: monumentenstatus kan beperkingen opleggen bij verbouwing.
+      </p>
+    </div>
+  )
+}
+
 function WoningGegevensColumn({ result }: { result: EnhancedWaardebepalingResponse }) {
   const WONINGTYPE_LABELS: Record<string, string> = {
     appartement: 'Appartement',
@@ -154,6 +236,11 @@ function WoningGegevensColumn({ result }: { result: EnhancedWaardebepalingRespon
           </div>
         </dl>
       </div>
+
+      {/* Monumentstatus */}
+      {result.monument?.heeft_monumentstatus && (
+        <MonumentPanel monument={result.monument} />
+      )}
 
       {/* WOZ-waarde */}
       {(result.woz_waarde || result.grondoppervlakte) && (

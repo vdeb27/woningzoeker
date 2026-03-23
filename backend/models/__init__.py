@@ -7,6 +7,7 @@ from models.watchlist import WatchlistItem
 from models.prijshistorie import Prijshistorie
 from models.transactie import Transactie
 from models.school import School
+from models.gemeentelijk_monument import GemeentelijkMonument
 
 __all__ = [
     "Base",
@@ -19,4 +20,5 @@ __all__ = [
     "Prijshistorie",
     "Transactie",
     "School",
+    "GemeentelijkMonument",
 ]
