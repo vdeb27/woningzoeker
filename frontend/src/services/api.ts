@@ -144,8 +144,45 @@ export interface EnhancedWaardebepalingResponse {
   buurt_gem_woz?: number
   buurt_koopwoningen_pct?: number
   buurt_gem_inkomen?: number
+  // Monument status
+  monument?: MonumentResponse
   // Data sources
   data_bronnen: string[]
+}
+
+// Monument status
+export interface RijksmonumentInfo {
+  is_monument: boolean
+  monumentnummer?: number
+  omschrijving?: string
+  categorie?: string
+  url?: string
+}
+
+export interface GemeentelijkMonumentInfo {
+  is_monument: boolean
+  gemeente?: string
+  omschrijving?: string
+}
+
+export interface BeschermdGezichtInfo {
+  in_beschermd_gezicht: boolean
+  naam?: string
+  type?: string
+  niveau?: string  // "rijks" or "gemeentelijk"
+}
+
+export interface UnescoInfo {
+  in_unesco: boolean
+  naam?: string
+}
+
+export interface MonumentResponse {
+  rijksmonument?: RijksmonumentInfo
+  gemeentelijk_monument?: GemeentelijkMonumentInfo
+  beschermd_gezicht?: BeschermdGezichtInfo
+  unesco?: UnescoInfo
+  heeft_monumentstatus: boolean
 }
 
 // GeoJSON types
@@ -620,6 +657,31 @@ export async function fetchVoorzieningen(params: {
   const response = await fetch(`${API_BASE}/voorzieningen/adres?${searchParams}`)
   if (!response.ok) {
     throw new Error('Voorzieningen ophalen mislukt')
+  }
+  return response.json()
+}
+
+// Monument status
+export async function fetchMonumentStatus(params: {
+  postcode: string
+  huisnummer: number
+}): Promise<MonumentResponse> {
+  const pc = params.postcode.replace(/\s/g, '').toUpperCase()
+  const response = await fetch(
+    `${API_BASE}/woningen/adres/${pc}/${params.huisnummer}/monument`
+  )
+  if (!response.ok) {
+    throw new Error('Monumentstatus ophalen mislukt')
+  }
+  return response.json()
+}
+
+export async function fetchWoningMonumentStatus(
+  woningId: number
+): Promise<MonumentResponse> {
+  const response = await fetch(`${API_BASE}/woningen/${woningId}/monument`)
+  if (!response.ok) {
+    throw new Error('Monumentstatus ophalen mislukt')
   }
   return response.json()
 }

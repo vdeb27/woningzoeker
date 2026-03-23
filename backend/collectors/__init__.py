@@ -67,6 +67,16 @@ from collectors.cycling_collector import (
     CyclingRoute,
     create_cycling_collector,
 )
+from collectors.rce_collector import (
+    RCECollector,
+    RijksmonumentResult,
+    create_rce_collector,
+)
+from collectors.pdok_beschermde_gebieden_collector import (
+    PDOKBeschermdeGebiedenCollector,
+    BeschermdGebiedResult,
+    create_pdok_beschermde_gebieden_collector,
+)
 
 __all__ = [
     # BAG
@@ -131,4 +141,12 @@ __all__ = [
     "CyclingCollector",
     "CyclingRoute",
     "create_cycling_collector",
+    # RCE Rijksmonumenten
+    "RCECollector",
+    "RijksmonumentResult",
+    "create_rce_collector",
+    # PDOK Beschermde Gebieden
+    "PDOKBeschermdeGebiedenCollector",
+    "BeschermdGebiedResult",
+    "create_pdok_beschermde_gebieden_collector",
 ]
