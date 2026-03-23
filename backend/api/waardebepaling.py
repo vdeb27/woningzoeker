@@ -1,13 +1,16 @@
 """Property valuation (waardebepaling) API routes."""
 
 import os
+import re
 from typing import Any, Dict, List, Optional
+
+import requests
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from models import get_db, Woning, Transactie
+from models import get_db, Woning, Transactie, GemeentelijkMonument
 from services import ValuationService
 from collectors.woz_collector import create_woz_collector
 from collectors.energielabel_collector import create_energielabel_collector
@@ -16,6 +19,8 @@ from collectors.miljoenhuizen_collector import create_miljoenhuizen_collector, M
 from collectors.cbs_market_collector import create_cbs_market_collector
 from collectors.cbs_buurt_collector import create_cbs_buurt_collector, lookup_buurt_code_pdok, geocode_address_pdok
 from collectors.bag_collector import BagClient
+from collectors.rce_collector import create_rce_collector
+from collectors.pdok_beschermde_gebieden_collector import create_pdok_beschermde_gebieden_collector
 from datetime import datetime, timedelta
 from sqlalchemy import and_
 from utils.address import parse_huisnummer
@@ -222,8 +227,54 @@ class EnhancedWaardebepalingResponse(BaseModel):
     # Data sources used
     data_bronnen: List[str] = []
 
+    # Monument status
+    monument: Optional["MonumentResponse"] = None
+
     # Saved woning reference
     woning_id: Optional[int] = None
+
+
+# ============================================================================
+# Monument Status Models
+# ============================================================================
+
+class RijksmonumentInfo(BaseModel):
+    """Rijksmonument details."""
+    is_monument: bool = False
+    monumentnummer: Optional[int] = None
+    omschrijving: Optional[str] = None
+    categorie: Optional[str] = None
+    url: Optional[str] = None
+
+
+class GemeentelijkMonumentInfo(BaseModel):
+    """Gemeentelijk monument details."""
+    is_monument: bool = False
+    gemeente: Optional[str] = None
+    omschrijving: Optional[str] = None
+
+
+class BeschermdGezichtInfo(BaseModel):
+    """Beschermd stads-/dorpsgezicht details."""
+    in_beschermd_gezicht: bool = False
+    naam: Optional[str] = None
+    type: Optional[str] = None  # "stadsgezicht" or "dorpsgezicht"
+    niveau: Optional[str] = None  # "rijks" or "gemeentelijk"
+
+
+class UnescoInfo(BaseModel):
+    """UNESCO Werelderfgoed details."""
+    in_unesco: bool = False
+    naam: Optional[str] = None
+
+
+class MonumentResponse(BaseModel):
+    """Combined monument status response."""
+    rijksmonument: Optional[RijksmonumentInfo] = None
+    gemeentelijk_monument: Optional[GemeentelijkMonumentInfo] = None
+    beschermd_gezicht: Optional[BeschermdGezichtInfo] = None
+    unesco: Optional[UnescoInfo] = None
+    heeft_monumentstatus: bool = False
 
 
 # ============================================================================
@@ -604,6 +655,249 @@ def get_woning_comparables(woning_id: int, db: Session = Depends(get_db)):
 
 
 # ============================================================================
+# Monument Status Endpoints
+# ============================================================================
+
+WKPB_WFS_URL = "https://service.pdok.nl/kadaster/wkpb/wfs/v1_0"
+PDOK_LOCATIE_URL = "https://api.pdok.nl/bzk/locatieserver/search/v3_1/free"
+
+
+def _lookup_wkpb(postcode: str, huisnummer: int) -> Dict[str, Any]:
+    """
+    Query Kadaster WKPB (publiekrechtelijke beperkingen) for monument status.
+
+    Returns dict with keys: gemeentelijk_monument (bool), rijksmonument (bool),
+    gem_omschrijving, gem_inschrijfdatum, rk_omschrijving, rk_inschrijfdatum.
+    """
+    import re as _re
+
+    result = {
+        "gemeentelijk_monument": False,
+        "rijksmonument": False,
+        "gem_omschrijving": None,
+        "rk_omschrijving": None,
+    }
+
+    pc = postcode.replace(" ", "").upper()
+
+    # Step 1: Geocode to RD coordinates via PDOK
+    try:
+        r = requests.get(
+            PDOK_LOCATIE_URL,
+            params={
+                "q": f"{pc} {huisnummer}",
+                "fq": "type:adres",
+                "rows": 1,
+                "fl": "centroide_rd",
+            },
+            headers={"Accept": "application/json"},
+            timeout=10,
+        )
+        r.raise_for_status()
+        docs = r.json().get("response", {}).get("docs", [])
+        if not docs:
+            return result
+
+        rd_point = docs[0].get("centroide_rd", "")
+        m = _re.search(r"POINT\(([\d.]+)\s+([\d.]+)\)", rd_point)
+        if not m:
+            return result
+
+        x, y = float(m.group(1)), float(m.group(2))
+    except Exception:
+        return result
+
+    # Step 2: Query WKPB WFS with small bbox around the point
+    buf = 5  # 5 meter buffer
+    bbox = f"{x - buf},{y - buf},{x + buf},{y + buf},EPSG:28992"
+
+    try:
+        r = requests.get(
+            WKPB_WFS_URL,
+            params={
+                "service": "WFS",
+                "version": "2.0.0",
+                "request": "GetFeature",
+                "typeName": "wkpb:pb_multipolygon",
+                "bbox": bbox,
+                "outputFormat": "application/json",
+            },
+            headers={"Accept": "application/json"},
+            timeout=15,
+        )
+        r.raise_for_status()
+        features = r.json().get("features", [])
+
+        for feat in features:
+            props = feat.get("properties", {})
+            code = props.get("grondslagCode", "")
+            omschr = props.get("grondslagOmschrijving", "")
+
+            if code == "GWA":  # Gemeentewet: Aanwijzing gemeentelijk monument
+                result["gemeentelijk_monument"] = True
+                result["gem_omschrijving"] = omschr
+            elif code == "EWE":  # Erfgoedwet: Rijksmonument
+                result["rijksmonument"] = True
+                result["rk_omschrijving"] = omschr
+
+    except Exception:
+        pass
+
+    return result
+
+
+def _lookup_monument(
+    postcode: str,
+    huisnummer: int,
+    latitude: Optional[float],
+    longitude: Optional[float],
+    db: Session,
+) -> MonumentResponse:
+    """Look up monument status from all sources."""
+    rijksmonument_info = None
+    gemeentelijk_info = None
+    beschermd_info = None
+    unesco_info = None
+    heeft_status = False
+
+    # 1. Check WKPB (Kadaster publiekrechtelijke beperkingen) — authoritative
+    #    Covers both gemeentelijke monumenten and rijksmonumenten per address
+    wkpb = _lookup_wkpb(postcode, huisnummer)
+
+    if wkpb["gemeentelijk_monument"]:
+        heeft_status = True
+        gemeentelijk_info = GemeentelijkMonumentInfo(
+            is_monument=True,
+            omschrijving=wkpb.get("gem_omschrijving"),
+        )
+
+    # 2. Check rijksmonument via RCE SPARQL API (richer data than WKPB)
+    try:
+        rce = create_rce_collector()
+        rce_result = rce.get_monument_status(postcode, huisnummer)
+        if rce_result.is_monument:
+            heeft_status = True
+            rijksmonument_info = RijksmonumentInfo(
+                is_monument=True,
+                monumentnummer=rce_result.monumentnummer,
+                omschrijving=rce_result.omschrijving,
+                categorie=rce_result.categorie,
+                url=rce_result.url,
+            )
+    except Exception:
+        pass
+
+    # If WKPB says rijksmonument but RCE didn't find it (address mismatch),
+    # still mark it as rijksmonument with basic info from WKPB
+    if wkpb["rijksmonument"] and not rijksmonument_info:
+        heeft_status = True
+        rijksmonument_info = RijksmonumentInfo(
+            is_monument=True,
+            omschrijving=wkpb.get("rk_omschrijving"),
+        )
+
+    # 3. Fallback: check gemeentelijk monument in local DB (for addresses
+    #    where WKPB might not have data yet)
+    if not gemeentelijk_info:
+        pc = postcode.replace(" ", "").upper()
+        try:
+            gem_mon = (
+                db.query(GemeentelijkMonument)
+                .filter(
+                    GemeentelijkMonument.postcode == pc,
+                    GemeentelijkMonument.huisnummer == huisnummer,
+                )
+                .first()
+            )
+            if gem_mon:
+                heeft_status = True
+                gemeentelijk_info = GemeentelijkMonumentInfo(
+                    is_monument=True,
+                    gemeente=gem_mon.gemeente,
+                    omschrijving=gem_mon.omschrijving,
+                )
+        except Exception:
+            pass
+
+    # 4. Check beschermde gezichten + UNESCO via PDOK (requires coordinates)
+    if latitude and longitude:
+        try:
+            pdok = create_pdok_beschermde_gebieden_collector()
+            bg_result = pdok.get_beschermd_gebied(latitude, longitude)
+            if bg_result.in_beschermd_gezicht:
+                heeft_status = True
+                beschermd_info = BeschermdGezichtInfo(
+                    in_beschermd_gezicht=True,
+                    naam=bg_result.gezicht_naam,
+                    type=bg_result.gezicht_type,
+                    niveau=bg_result.gezicht_niveau,
+                )
+            if bg_result.in_unesco:
+                heeft_status = True
+                unesco_info = UnescoInfo(
+                    in_unesco=True,
+                    naam=bg_result.unesco_naam,
+                )
+        except Exception:
+            pass
+
+    return MonumentResponse(
+        rijksmonument=rijksmonument_info,
+        gemeentelijk_monument=gemeentelijk_info,
+        beschermd_gezicht=beschermd_info,
+        unesco=unesco_info,
+        heeft_monumentstatus=heeft_status,
+    )
+
+
+@router.get("/adres/{postcode}/{huisnummer}/monument", response_model=MonumentResponse)
+def get_monument_status_by_address(
+    postcode: str,
+    huisnummer: int,
+    db: Session = Depends(get_db),
+):
+    """Get monument status for an address."""
+    # Geocode for lat/lon (needed for PDOK beschermde gebieden)
+    lat, lon = None, None
+    try:
+        geo = geocode_address_pdok(postcode, huisnummer)
+        if geo:
+            lat = geo["lat"]
+            lon = geo["lng"]
+    except Exception:
+        pass
+
+    return _lookup_monument(postcode, huisnummer, lat, lon, db)
+
+
+@router.get("/{woning_id}/monument", response_model=MonumentResponse)
+def get_woning_monument_status(
+    woning_id: int,
+    db: Session = Depends(get_db),
+):
+    """Get monument status for a property in the database."""
+    woning = db.query(Woning).filter(Woning.id == woning_id).first()
+    if not woning:
+        raise HTTPException(status_code=404, detail="Woning niet gevonden")
+
+    if not woning.postcode:
+        raise HTTPException(status_code=400, detail="Woning heeft geen postcode")
+
+    huisnummer, _ = parse_huisnummer(woning.adres)
+    if not huisnummer:
+        raise HTTPException(
+            status_code=400,
+            detail="Kan huisnummer niet bepalen uit adres"
+        )
+
+    return _lookup_monument(
+        woning.postcode, huisnummer,
+        woning.latitude, woning.longitude,
+        db,
+    )
+
+
+# ============================================================================
 # Enhanced Valuation (with auto-fetch of WOZ and energielabel)
 # ============================================================================
 
@@ -759,6 +1053,26 @@ def bereken_waarde_voor_adres(
     except Exception:
         pass
 
+    # Fetch monument status
+    monument_result = None
+    try:
+        # Get lat/lon for PDOK check - try geocoding first
+        mon_lat, mon_lon = None, None
+        try:
+            geo_mon = geocode_address_pdok(request.postcode, request.huisnummer)
+            if geo_mon:
+                mon_lat = geo_mon["lat"]
+                mon_lon = geo_mon["lng"]
+        except Exception:
+            pass
+
+        monument_result = _lookup_monument(
+            request.postcode, request.huisnummer,
+            mon_lat, mon_lon, db,
+        )
+    except Exception:
+        pass
+
     # Calculate valuation
     service = ValuationService(db)
     if market_overbid_pct is not None:
@@ -821,6 +1135,8 @@ def bereken_waarde_voor_adres(
             data_bronnen.append("CBS Kerncijfers")
     if miljoenhuizen_verkopen:
         data_bronnen.append("Miljoenhuizen.nl")
+    if monument_result and monument_result.heeft_monumentstatus:
+        data_bronnen.append("RCE Monumentenregister")
 
     # --- Save/update woning in database ---
     saved_woning_id = None
@@ -970,5 +1286,6 @@ def bereken_waarde_voor_adres(
         buurt_koopwoningen_pct=buurt_data.koopwoningen_pct if buurt_data else None,
         buurt_gem_inkomen=buurt_data.gem_inkomen if buurt_data else None,
         data_bronnen=data_bronnen,
+        monument=monument_result,
         woning_id=saved_woning_id,
     )
