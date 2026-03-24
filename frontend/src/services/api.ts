@@ -95,6 +95,50 @@ export interface EnhancedWaardebepalingRequest {
   woningtype?: string
 }
 
+export interface FundaListing {
+  url: string
+  adres: string
+  postcode?: string
+  plaats?: string
+  vraagprijs?: number
+  vraagprijs_suffix?: string
+  woonoppervlakte?: number
+  perceeloppervlakte?: number
+  inhoud?: number
+  prijs_per_m2?: number
+  kamers?: number
+  slaapkamers?: number
+  badkamers?: number
+  bouwjaar?: number
+  woningtype?: string
+  bouwtype?: string
+  energielabel?: string
+  // Eigendomsituatie
+  eigendom_type?: string
+  vve_bijdrage?: number
+  erfpacht_bedrag?: number
+  // Tuin & buitenruimte
+  tuin_type?: string
+  tuin_oppervlakte?: number
+  tuin_orientatie?: string
+  balkon?: boolean
+  dakterras?: boolean
+  // Indeling & parkeren
+  verdiepingen?: number
+  garage_type?: string
+  parkeerplaatsen?: number
+  parkeer_type?: string
+  kelder?: boolean
+  zolder?: string
+  berging?: string
+  // Extra
+  isolatie?: string
+  verwarming?: string
+  dak_type?: string
+  aangeboden_sinds?: string
+  status: string
+}
+
 export interface EnhancedWaardebepalingResponse {
   postcode: string
   huisnummer: number
@@ -146,6 +190,8 @@ export interface EnhancedWaardebepalingResponse {
   buurt_gem_inkomen?: number
   // Monument status
   monument?: MonumentResponse
+  // Funda listing
+  funda_listing?: FundaListing
   // Data sources
   data_bronnen: string[]
 }

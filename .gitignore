@@ -3,6 +3,9 @@
 .env.local
 .env.*.local
 
+# Funda cookies (authentication data)
+config/funda_cookies.json
+
 # Python
 __pycache__/
 *.py[cod]

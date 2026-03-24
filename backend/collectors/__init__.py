@@ -77,6 +77,12 @@ from collectors.pdok_beschermde_gebieden_collector import (
     BeschermdGebiedResult,
     create_pdok_beschermde_gebieden_collector,
 )
+from collectors.funda_collector import (
+    FundaCollector,
+    PropertyListing,
+    parse_funda_url,
+    create_funda_collector,
+)
 
 __all__ = [
     # BAG
@@ -149,4 +155,9 @@ __all__ = [
     "PDOKBeschermdeGebiedenCollector",
     "BeschermdGebiedResult",
     "create_pdok_beschermde_gebieden_collector",
+    # Funda
+    "FundaCollector",
+    "PropertyListing",
+    "parse_funda_url",
+    "create_funda_collector",
 ]
