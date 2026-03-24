@@ -322,7 +322,19 @@ function FundaListingPanel({ listing }: { listing: FundaListing }) {
   return (
     <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
       <div className="flex items-center justify-between mb-3">
-        <div className="text-sm text-orange-700 font-medium">Funda listing</div>
+        <div className="flex items-center gap-2">
+          <div className="text-sm text-orange-700 font-medium">Funda listing</div>
+          {listing.status === 'verkocht' && (
+            <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs font-semibold rounded-full border border-red-200 uppercase tracking-wide">
+              Verkocht
+            </span>
+          )}
+          {listing.status === 'onder bod' && (
+            <span className="px-2 py-0.5 bg-yellow-100 text-yellow-700 text-xs font-semibold rounded-full border border-yellow-200 uppercase tracking-wide">
+              Onder bod
+            </span>
+          )}
+        </div>
         <a
           href={listing.url}
           target="_blank"
@@ -356,7 +368,6 @@ function FundaListingPanel({ listing }: { listing: FundaListing }) {
         {detailRow('Woningtype', listing.woningtype)}
         {detailRow('Energielabel', listing.energielabel)}
         {listing.aangeboden_sinds && detailRow('Aangeboden sinds', listing.aangeboden_sinds)}
-        {listing.status !== 'beschikbaar' && detailRow('Status', listing.status)}
         {listing.verkoopdatum && detailRow('Verkoopdatum', listing.verkoopdatum)}
         {listing.looptijd_dagen != null && detailRow('Looptijd', `${listing.looptijd_dagen} dagen`)}
       </div>
