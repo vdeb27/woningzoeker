@@ -687,7 +687,7 @@ export default function WaardebepalingPage() {
       {/* Zoekformulier */}
       <div className="bg-white rounded-lg shadow p-6 mb-8">
         <form onSubmit={handleSubmit}>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Postcode *
