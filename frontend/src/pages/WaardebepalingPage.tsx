@@ -489,11 +489,11 @@ function AnalyseColumn({ result, onCopy, copied }: {
       {/* Biedadvies */}
       {result.vraagprijs && (
         <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold mb-4">Biedadvies</h3>
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-lg font-semibold">Biedadvies</h3>
             <BiedAdviesBadge advies={result.bied_advies} />
           </div>
-          <div className="mt-4 bg-gray-50 rounded-lg p-4">
+          <div className="bg-gray-50 rounded-lg p-4">
             <div className="text-sm text-gray-600">Aanbevolen biedingsbereik</div>
             <div className="flex items-center justify-between">
               <div className="text-xl font-semibold">
