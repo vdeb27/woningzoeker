@@ -21,6 +21,7 @@ from collectors.cbs_buurt_collector import create_cbs_buurt_collector, lookup_bu
 from collectors.bag_collector import BagClient
 from collectors.rce_collector import create_rce_collector
 from collectors.pdok_beschermde_gebieden_collector import create_pdok_beschermde_gebieden_collector
+from collectors.funda_collector import create_funda_collector, PropertyListing as FundaPropertyListing
 from datetime import datetime, timedelta
 from sqlalchemy import and_
 from utils.address import parse_huisnummer
@@ -138,6 +139,51 @@ class MiljoenhuizenVerkoop(BaseModel):
     geschatte_waarde_hoog: Optional[int] = None
 
 
+class FundaListing(BaseModel):
+    """Funda listing data for a property."""
+    url: str
+    adres: str
+    postcode: Optional[str] = None
+    plaats: Optional[str] = None
+    vraagprijs: Optional[int] = None
+    vraagprijs_suffix: Optional[str] = None
+    woonoppervlakte: Optional[int] = None
+    perceeloppervlakte: Optional[int] = None
+    inhoud: Optional[int] = None
+    prijs_per_m2: Optional[float] = None
+    kamers: Optional[int] = None
+    slaapkamers: Optional[int] = None
+    badkamers: Optional[int] = None
+    bouwjaar: Optional[int] = None
+    woningtype: Optional[str] = None
+    bouwtype: Optional[str] = None
+    energielabel: Optional[str] = None
+    # Eigendomsituatie
+    eigendom_type: Optional[str] = None
+    vve_bijdrage: Optional[int] = None
+    erfpacht_bedrag: Optional[int] = None
+    # Tuin & buitenruimte
+    tuin_type: Optional[str] = None
+    tuin_oppervlakte: Optional[int] = None
+    tuin_orientatie: Optional[str] = None
+    balkon: Optional[bool] = None
+    dakterras: Optional[bool] = None
+    # Indeling & parkeren
+    verdiepingen: Optional[int] = None
+    garage_type: Optional[str] = None
+    parkeerplaatsen: Optional[int] = None
+    parkeer_type: Optional[str] = None
+    kelder: Optional[bool] = None
+    zolder: Optional[str] = None
+    berging: Optional[str] = None
+    # Extra
+    isolatie: Optional[str] = None
+    verwarming: Optional[str] = None
+    dak_type: Optional[str] = None
+    aangeboden_sinds: Optional[str] = None
+    status: str = "beschikbaar"
+
+
 class AddressLookupRequest(BaseModel):
     """Request for address-based data lookup."""
     postcode: str
@@ -229,6 +275,9 @@ class EnhancedWaardebepalingResponse(BaseModel):
 
     # Monument status
     monument: Optional["MonumentResponse"] = None
+
+    # Funda listing
+    funda_listing: Optional[FundaListing] = None
 
     # Saved woning reference
     woning_id: Optional[int] = None
@@ -1021,6 +1070,58 @@ def bereken_waarde_voor_adres(
     except Exception:
         pass
 
+    # Fetch Funda listing for this address
+    funda_listing_data: Optional[FundaListing] = None
+    try:
+        funda_collector = create_funda_collector()
+        funda_result = funda_collector.search_by_address(
+            postcode=request.postcode,
+            huisnummer=request.huisnummer,
+            huisletter=getattr(request, "huisletter", None),
+        )
+        if funda_result:
+            funda_listing_data = FundaListing(
+                url=funda_result.url,
+                adres=funda_result.address,
+                postcode=funda_result.postcode,
+                plaats=funda_result.city,
+                vraagprijs=funda_result.price,
+                vraagprijs_suffix=funda_result.price_suffix,
+                woonoppervlakte=funda_result.living_area,
+                perceeloppervlakte=funda_result.plot_area,
+                inhoud=funda_result.volume,
+                prijs_per_m2=funda_result.price_per_m2,
+                kamers=funda_result.rooms,
+                slaapkamers=funda_result.bedrooms,
+                badkamers=funda_result.bathrooms,
+                bouwjaar=funda_result.year_built,
+                woningtype=funda_result.building_type,
+                bouwtype=funda_result.construction_type,
+                energielabel=funda_result.energy_label,
+                eigendom_type=funda_result.eigendom_type,
+                vve_bijdrage=funda_result.vve_bijdrage,
+                erfpacht_bedrag=funda_result.erfpacht_bedrag,
+                tuin_type=funda_result.tuin_type,
+                tuin_oppervlakte=funda_result.tuin_oppervlakte,
+                tuin_orientatie=funda_result.tuin_orientatie,
+                balkon=funda_result.balkon,
+                dakterras=funda_result.dakterras,
+                verdiepingen=funda_result.verdiepingen,
+                garage_type=funda_result.garage_type,
+                parkeerplaatsen=funda_result.parkeerplaatsen,
+                parkeer_type=funda_result.parkeer_type,
+                kelder=funda_result.kelder,
+                zolder=funda_result.zolder,
+                berging=funda_result.berging,
+                isolatie=funda_result.isolatie,
+                verwarming=funda_result.verwarming,
+                dak_type=funda_result.dak_type,
+                aangeboden_sinds=funda_result.aangeboden_sinds,
+                status=funda_result.status,
+            )
+    except Exception:
+        pass
+
     energielabel = energielabel_result.energielabel if energielabel_result else None
     grondoppervlakte = woz_result.oppervlakte if woz_result else None
 
@@ -1135,6 +1236,8 @@ def bereken_waarde_voor_adres(
             data_bronnen.append("CBS Kerncijfers")
     if miljoenhuizen_verkopen:
         data_bronnen.append("Miljoenhuizen.nl")
+    if funda_listing_data:
+        data_bronnen.append("Funda")
     if monument_result and monument_result.heeft_monumentstatus:
         data_bronnen.append("RCE Monumentenregister")
 
@@ -1184,6 +1287,40 @@ def bereken_waarde_voor_adres(
                 matched.bag_oppervlakte = safe_int(bag_data.get("oppervlakte"))
                 matched.bag_bouwjaar = safe_int(bag_data.get("pand_bouwjaar"))
                 matched.bag_gebruiksdoel = bag_data.get("gebruiksdoel")
+            # Funda data: store in raw_data and track price changes
+            if funda_listing_data:
+                raw = matched.raw_data or {}
+                if isinstance(raw, str):
+                    import json as _json
+                    raw = _json.loads(raw)
+                old_funda_prijs = raw.get("funda_vraagprijs")
+                new_funda_prijs = funda_listing_data.vraagprijs
+                # Track price changes in prijshistorie
+                if (
+                    old_funda_prijs
+                    and new_funda_prijs
+                    and old_funda_prijs != new_funda_prijs
+                ):
+                    from models import Prijshistorie
+                    ph_type = (
+                        "verlaagd"
+                        if new_funda_prijs < old_funda_prijs
+                        else "verhoogd"
+                    )
+                    ph = Prijshistorie(
+                        woning_id=matched.id,
+                        prijs=old_funda_prijs,
+                        type=ph_type,
+                        datum=datetime.now(),
+                    )
+                    db.add(ph)
+                raw["funda_url"] = funda_listing_data.url
+                raw["funda_vraagprijs"] = new_funda_prijs
+                raw["funda_data"] = funda_listing_data.model_dump()
+                matched.raw_data = raw
+                # Update vraagprijs from Funda if user didn't provide one
+                if not request.vraagprijs and new_funda_prijs:
+                    matched.vraagprijs = new_funda_prijs
             matched.updated_at = datetime.now()
             matched.enriched_at = datetime.now()
             db.commit()
@@ -1213,6 +1350,15 @@ def bereken_waarde_voor_adres(
                 waarde_confidence=valuation.confidence,
                 biedadvies=valuation.bied_advies.value,
                 enriched_at=datetime.now(),
+                raw_data=(
+                    {
+                        "funda_url": funda_listing_data.url,
+                        "funda_vraagprijs": funda_listing_data.vraagprijs,
+                        "funda_data": funda_listing_data.model_dump(),
+                    }
+                    if funda_listing_data
+                    else None
+                ),
             )
             db.add(woning)
             db.commit()
@@ -1287,5 +1433,6 @@ def bereken_waarde_voor_adres(
         buurt_gem_inkomen=buurt_data.gem_inkomen if buurt_data else None,
         data_bronnen=data_bronnen,
         monument=monument_result,
+        funda_listing=funda_listing_data,
         woning_id=saved_woning_id,
     )
