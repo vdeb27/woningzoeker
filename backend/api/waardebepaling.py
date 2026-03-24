@@ -182,6 +182,9 @@ class FundaListing(BaseModel):
     dak_type: Optional[str] = None
     aangeboden_sinds: Optional[str] = None
     status: str = "beschikbaar"
+    # Verkocht-specifiek
+    verkoopdatum: Optional[str] = None
+    looptijd_dagen: Optional[int] = None
 
 
 class AddressLookupRequest(BaseModel):
@@ -1118,6 +1121,8 @@ def bereken_waarde_voor_adres(
                 dak_type=funda_result.dak_type,
                 aangeboden_sinds=funda_result.aangeboden_sinds,
                 status=funda_result.status,
+                verkoopdatum=funda_result.verkoopdatum,
+                looptijd_dagen=funda_result.looptijd_dagen,
             )
     except Exception:
         pass

@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional
 from urllib.parse import quote
 
 import requests
@@ -87,6 +87,11 @@ class PropertyListing:
     dak_type: Optional[str] = None
     aangeboden_sinds: Optional[str] = None  # datum, vereist login
     status: str = "beschikbaar"
+
+    # Verkocht-specifiek
+    verkoopdatum: Optional[str] = None  # "2025-01-15"
+    looptijd_dagen: Optional[int] = None  # dagen op markt
+
     date_scraped: datetime = field(default_factory=datetime.now)
 
     @property
@@ -153,6 +158,8 @@ class PropertyListing:
             "dak_type": self.dak_type,
             "aangeboden_sinds": self.aangeboden_sinds,
             "status": self.status,
+            "verkoopdatum": self.verkoopdatum,
+            "looptijd_dagen": self.looptijd_dagen,
             "price_per_m2": self.price_per_m2,
             "date_scraped": self.date_scraped.isoformat(),
         }
@@ -206,6 +213,8 @@ class PropertyListing:
             dak_type=data.get("dak_type"),
             aangeboden_sinds=data.get("aangeboden_sinds"),
             status=data.get("status", "beschikbaar"),
+            verkoopdatum=data.get("verkoopdatum"),
+            looptijd_dagen=data.get("looptijd_dagen"),
             date_scraped=scraped_at,
         )
 
@@ -610,7 +619,96 @@ class FundaCollector:
         if aangeboden and "log in" not in aangeboden.lower():
             listing.aangeboden_sinds = aangeboden
 
+        # Verkocht-specifieke velden
+        if "Verkoopdatum" in km:
+            vd_text = km["Verkoopdatum"]
+            # Parse "15 januari 2025" format
+            listing.verkoopdatum = vd_text
+
+        if "Looptijd" in km:
+            looptijd_text = km["Looptijd"]
+            # Parse "45 dagen" or "2 maanden en 15 dagen"
+            dagen_match = re.search(r"(\d+)\s*dag", looptijd_text)
+            if dagen_match:
+                listing.looptijd_dagen = int(dagen_match.group(1))
+            maanden_match = re.search(r"(\d+)\s*maand", looptijd_text)
+            if maanden_match:
+                maanden = int(maanden_match.group(1))
+                extra_dagen = int(dagen_match.group(1)) if dagen_match else 0
+                listing.looptijd_dagen = maanden * 30 + extra_dagen
+
         return listing
+
+    # ---- Address resolution ----
+
+    def _resolve_street_from_pdok(
+        self, postcode: str, huisnummer: int
+    ) -> Optional[Dict[str, str]]:
+        """
+        Resolve street name and city from PDOK Locatieserver.
+
+        Returns dict with 'straatnaam', 'woonplaats', or None on failure.
+        """
+        pc = postcode.replace(" ", "").upper()
+        url = "https://api.pdok.nl/bzk/locatieserver/search/v3_1/free"
+        params = {
+            "q": f"{pc} {huisnummer}",
+            "fq": "type:adres",
+            "rows": 1,
+            "fl": "straatnaam,woonplaatsnaam",
+        }
+        try:
+            response = requests.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            docs = data.get("response", {}).get("docs", [])
+            if docs:
+                doc = docs[0]
+                straatnaam = doc.get("straatnaam")
+                woonplaats = doc.get("woonplaatsnaam")
+                if straatnaam and woonplaats:
+                    return {"straatnaam": straatnaam, "woonplaats": woonplaats}
+        except requests.RequestException:
+            pass
+        return None
+
+    @staticmethod
+    def _slugify(text: str) -> str:
+        """Convert text to a Funda-compatible URL slug.
+
+        Examples: "Gerard Reijnststraat" -> "gerard-reijnststraat"
+                  "'s-Gravenhage" -> "s-gravenhage"
+        """
+        slug = text.lower().strip()
+        slug = slug.replace("'", "")
+        # Replace non-alphanumeric chars (except dash) with dashes
+        slug = re.sub(r"[^a-z0-9-]", "-", slug)
+        # Collapse multiple dashes
+        slug = re.sub(r"-+", "-", slug)
+        return slug.strip("-")
+
+    # Known mappings from PDOK woonplaats to Funda city slug
+    _CITY_SLUG_MAP: ClassVar[Dict[str, str]] = {
+        "'s-gravenhage": "den-haag",
+        "'s-hertogenbosch": "s-hertogenbosch",
+    }
+
+    def _build_street_geo_identifier(
+        self, straatnaam: str, woonplaats: str
+    ) -> str:
+        """
+        Build a street-level GeoIdentifier for Funda search.
+
+        Constructs the identifier directly from PDOK address data.
+        Format: '{city-slug}/straat-{street-slug}'
+        """
+        city_lower = woonplaats.lower().strip()
+        city_slug = self._CITY_SLUG_MAP.get(city_lower)
+        if not city_slug:
+            city_slug = self._slugify(woonplaats)
+
+        street_slug = self._slugify(straatnaam)
+        return f"{city_slug}/straat-{street_slug}"
 
     # ---- Search ----
 
@@ -671,9 +769,14 @@ class FundaCollector:
         postcode: str,
         huisnummer: int,
         huisletter: Optional[str] = None,
+        include_sold: bool = True,
     ) -> Optional[PropertyListing]:
         """
         Search for a property listing by postcode and house number.
+
+        Uses the Funda suggest API to resolve a street-level GeoIdentifier,
+        then searches with that for precise results. Falls back to
+        postcode-based search if the suggest API fails.
 
         Parameters
         ----------
@@ -683,6 +786,8 @@ class FundaCollector:
             House number
         huisletter : str, optional
             House letter suffix (e.g., "A")
+        include_sold : bool
+            If True, also searches for sold/negotiating properties.
 
         Returns
         -------
@@ -702,55 +807,73 @@ class FundaCollector:
         if cached and cached.get("not_found"):
             return None
 
-        # Step 1: Search on PC6 first, fallback to PC4
+        # Build availability filter for including sold properties
+        availability_param = ""
+        if include_sold:
+            availability_param = '&availability=["available","negotiations","unavailable"]'
+
         detail_url = None
-        for search_area in [pc, pc4]:
-            search_url = (
-                f"{self.BASE_URL}/zoeken/koop/"
-                f'?selected_area=["{search_area}"]'
+
+        # Strategy 1: Resolve street name via PDOK, build street-level GeoIdentifier
+        pdok_result = self._resolve_street_from_pdok(pc, huisnummer)
+        if pdok_result:
+            geo_id = self._build_street_geo_identifier(
+                pdok_result["straatnaam"], pdok_result["woonplaats"]
             )
-            search_html = self._fetch_page(search_url)
-            if not search_html:
-                continue
+            if geo_id:
+                search_url = (
+                    f"{self.BASE_URL}/zoeken/koop/"
+                    f'?selected_area=["{geo_id}"]'
+                    f"{availability_param}"
+                )
+                search_html = self._fetch_page(search_url)
+                if search_html and "Je bent bijna op de pagina" not in search_html:
+                    detail_url = self._find_listing_url_for_address(
+                        search_html, huisnummer
+                    )
 
-            # Check for verification/captcha page
-            if "Je bent bijna op de pagina" in search_html:
-                return None
+        # Strategy 2: Fallback to PC6 → PC4 search
+        if not detail_url:
+            for search_area in [pc, pc4]:
+                search_url = (
+                    f"{self.BASE_URL}/zoeken/koop/"
+                    f'?selected_area=["{search_area}"]'
+                    f"{availability_param}"
+                )
+                search_html = self._fetch_page(search_url)
+                if not search_html:
+                    continue
 
-            # Try to find matching listing URL
-            detail_url = self._find_listing_url_for_address(
-                search_html, huisnummer
-            )
-            if detail_url:
-                break
+                if "Je bent bijna op de pagina" in search_html:
+                    return None
 
-            # If PC6 had 0 results, try PC4
-            if "0 resultaten" in search_html.lower():
-                continue
-            else:
-                # Had results but no match — stop searching
-                break
+                detail_url = self._find_listing_url_for_address(
+                    search_html, huisnummer
+                )
+                if detail_url:
+                    break
+
+                if "0 resultaten" in search_html.lower():
+                    continue
+                else:
+                    break
 
         if not detail_url:
-            # Cache the "not found" result to avoid repeated searches
             self._save_to_cache(cache_key, {"not_found": True})
             return None
 
-        # Step 3: Fetch detail page
+        # Fetch and parse detail page
         detail_html = self._fetch_page(detail_url)
         if not detail_html:
             return None
 
-        # Step 4: Parse detail page
         listing = self.parse_detail_page(detail_html, url=detail_url)
         if not listing:
             return None
 
-        # Fill in postcode if not found in page
         if not listing.postcode:
             listing.postcode = pc
 
-        # Cache result
         self._save_to_cache(cache_key, {"listing": listing.to_dict()})
 
         return listing
