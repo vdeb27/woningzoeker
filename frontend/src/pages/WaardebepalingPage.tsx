@@ -307,7 +307,7 @@ function WoningGegevensColumn({ result }: { result: EnhancedWaardebepalingRespon
   )
 }
 
-function FundaListingPanel({ listing }: { listing: FundaListing }) {
+function FundaListingPanel({ listing, bagWoonoppervlakte }: { listing: FundaListing, bagWoonoppervlakte?: number }) {
   const detailRow = (label: string, value: string | number | boolean | undefined | null) => {
     if (value === undefined || value === null) return null
     const display = typeof value === 'boolean' ? (value ? 'Ja' : 'Nee') : String(value)
@@ -360,6 +360,12 @@ function FundaListingPanel({ listing }: { listing: FundaListing }) {
         )}
         {listing.prijs_per_m2 && detailRow('Prijs/m²', formatM2Prijs(listing.prijs_per_m2))}
         {detailRow('Woonoppervlakte', listing.woonoppervlakte ? `${listing.woonoppervlakte} m²` : undefined)}
+        {listing.woonoppervlakte && bagWoonoppervlakte && Math.abs(listing.woonoppervlakte - bagWoonoppervlakte) / bagWoonoppervlakte > 0.05 && (
+          <div className="text-xs text-orange-500 italic pl-1">
+            BAG: {bagWoonoppervlakte} m² (verschil {Math.round(Math.abs(listing.woonoppervlakte - bagWoonoppervlakte) / bagWoonoppervlakte * 100)}%)
+          </div>
+        )}
+        {detailRow('Buitenruimte', listing.buitenruimte ? `${listing.buitenruimte} m²` : undefined)}
         {detailRow('Perceeloppervlakte', listing.perceeloppervlakte ? `${listing.perceeloppervlakte} m²` : undefined)}
         {detailRow('Inhoud', listing.inhoud ? `${listing.inhoud} m³` : undefined)}
         {detailRow('Kamers', listing.kamers ? `${listing.kamers}${listing.slaapkamers ? ` (${listing.slaapkamers} slaapkamers)` : ''}` : undefined)}
@@ -537,7 +543,7 @@ function AnalyseColumn({ result, onCopy, copied }: {
 
       {/* Funda listing */}
       {result.funda_listing && (
-        <FundaListingPanel listing={result.funda_listing} />
+        <FundaListingPanel listing={result.funda_listing} bagWoonoppervlakte={result.woonoppervlakte} />
       )}
 
       {/* Marktindicatoren */}
@@ -644,7 +650,6 @@ export default function WaardebepalingPage() {
     huisnummer: 0,
     huisletter: undefined,
     toevoeging: undefined,
-    vraagprijs: undefined,
   })
 
   const [copied, setCopied] = useState(false)
@@ -747,25 +752,6 @@ export default function WaardebepalingPage() {
                     toevoeging: e.target.value || undefined,
                   })
                 }
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Vraagprijs
-              </label>
-              <input
-                type="number"
-                min={0}
-                step={1000}
-                value={formData.vraagprijs || ''}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    vraagprijs: e.target.value ? Number(e.target.value) : undefined,
-                  })
-                }
-                placeholder="450000"
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
               />
             </div>

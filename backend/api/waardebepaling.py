@@ -166,6 +166,7 @@ class FundaListing(BaseModel):
     tuin_type: Optional[str] = None
     tuin_oppervlakte: Optional[int] = None
     tuin_orientatie: Optional[str] = None
+    buitenruimte: Optional[int] = None
     balkon: Optional[bool] = None
     dakterras: Optional[bool] = None
     # Indeling & parkeren
@@ -1107,6 +1108,7 @@ def bereken_waarde_voor_adres(
                 tuin_type=funda_result.tuin_type,
                 tuin_oppervlakte=funda_result.tuin_oppervlakte,
                 tuin_orientatie=funda_result.tuin_orientatie,
+                buitenruimte=funda_result.buitenruimte,
                 balkon=funda_result.balkon,
                 dakterras=funda_result.dakterras,
                 verdiepingen=funda_result.verdiepingen,
@@ -1184,12 +1186,17 @@ def bereken_waarde_voor_adres(
     if market_overbid_pct is not None:
         service.set_market_overbid(market_overbid_pct)
 
+    # Use Funda asking price if user didn't provide one
+    vraagprijs = request.vraagprijs
+    if not vraagprijs and funda_listing_data and funda_listing_data.vraagprijs:
+        vraagprijs = funda_listing_data.vraagprijs
+
     valuation = service.estimate_value(
         woonoppervlakte=woonoppervlakte,
         energielabel=energielabel,
         bouwjaar=bouwjaar,
         woningtype=request.woningtype,
-        vraagprijs=request.vraagprijs,
+        vraagprijs=vraagprijs,
         grondoppervlakte=grondoppervlakte,
     )
 

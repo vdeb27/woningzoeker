@@ -121,6 +121,7 @@ export interface FundaListing {
   tuin_type?: string
   tuin_oppervlakte?: number
   tuin_orientatie?: string
+  buitenruimte?: number
   balkon?: boolean
   dakterras?: boolean
   // Indeling & parkeren
