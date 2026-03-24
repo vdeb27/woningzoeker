@@ -67,6 +67,7 @@ class PropertyListing:
     tuin_type: Optional[str] = None  # "Achtertuin en voortuin"
     tuin_oppervlakte: Optional[int] = None  # m²
     tuin_orientatie: Optional[str] = None  # "Gelegen op het noordoosten"
+    buitenruimte: Optional[int] = None  # gebouwgebonden buitenruimte m²
     balkon: Optional[bool] = None
     dakterras: Optional[bool] = None
 
@@ -142,6 +143,7 @@ class PropertyListing:
             "tuin_type": self.tuin_type,
             "tuin_oppervlakte": self.tuin_oppervlakte,
             "tuin_orientatie": self.tuin_orientatie,
+            "buitenruimte": self.buitenruimte,
             "balkon": self.balkon,
             "dakterras": self.dakterras,
             "verdiepingen": self.verdiepingen,
@@ -197,6 +199,7 @@ class PropertyListing:
             tuin_type=data.get("tuin_type"),
             tuin_oppervlakte=data.get("tuin_oppervlakte"),
             tuin_orientatie=data.get("tuin_orientatie"),
+            buitenruimte=data.get("buitenruimte"),
             balkon=data.get("balkon"),
             dakterras=data.get("dakterras"),
             verdiepingen=data.get("verdiepingen"),
@@ -564,6 +567,10 @@ class FundaCollector:
 
         listing.tuin_orientatie = km.get("Ligging tuin")
 
+        # Gebouwgebonden buitenruimte (balkon/terras oppervlakte)
+        if "Gebouwgebonden buitenruimte" in km:
+            listing.buitenruimte = self._parse_int(km["Gebouwgebonden buitenruimte"])
+
         # Balkon/dakterras
         for dt_text in km:
             lower = dt_text.lower()
@@ -571,13 +578,6 @@ class FundaCollector:
                 listing.balkon = True
             if "dakterras" in lower:
                 listing.dakterras = True
-
-        # Also check description text for balkon/dakterras
-        if not listing.balkon:
-            gebouw_buiten = km.get("Gebouwgebonden buitenruimte", "")
-            if gebouw_buiten and self._parse_int(gebouw_buiten):
-                # Has some outdoor building space, might be balcony
-                pass
 
         # Indeling & parkeren
         if "Aantal woonlagen" in km:
