@@ -1,10 +1,10 @@
-import { useMemo, useEffect, useRef } from 'react'
+import { useMemo, useEffect, useRef, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { MapContainer, TileLayer, Marker, Popup, CircleMarker, LayersControl, LayerGroup, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Popup, CircleMarker, LayersControl, LayerGroup, FeatureGroup, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
-import { fetchBuurtenGeoJSON, fetchWoningenGeoJSON, fetchScholenGeoJSON, formatPrijs } from '../services/api'
+import { fetchBuurtenGeoJSON, fetchWoningenGeoJSON, fetchScholenGeoJSON, fetchPostcode6GeoJSON, formatPrijs } from '../services/api'
 
 // Fix default marker icons for Vite bundler
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -15,7 +15,8 @@ L.Icon.Default.mergeOptions({
   shadowUrl: new URL('leaflet/dist/images/marker-shadow.png', import.meta.url).href,
 })
 
-// Imperative GeoJSON layer component using useMap() to avoid React-Leaflet v4 rendering issues
+// Imperative GeoJSON layer that adds to a FeatureGroup (not directly to the map).
+// This lets LayersControl manage visibility via the parent FeatureGroup.
 function BuurtGeoJSONLayer({
   data,
   colorIndicator,
@@ -23,21 +24,22 @@ function BuurtGeoJSONLayer({
   minVal,
   maxVal,
   onBuurtClick,
+  parentGroup,
 }: {
-  data: GeoJSON.FeatureCollection
+  data: GeoJSON.FeatureCollection | undefined
   colorIndicator: string
   selectedBuurten: string[]
   minVal: number
   maxVal: number
   onBuurtClick?: (code: string) => void
+  parentGroup: React.RefObject<L.FeatureGroup | null>
 }) {
   const map = useMap()
   const layerRef = useRef<L.GeoJSON | null>(null)
   const selectedRef = useRef<string[]>(selectedBuurten)
   selectedRef.current = selectedBuurten
 
-  // Helper to compute style for a feature
-  const getStyle = (feature: GeoJSON.Feature | undefined, selected: string[]) => {
+  const getStyle = useCallback((feature: GeoJSON.Feature | undefined, selected: string[]) => {
     const p = feature?.properties
     const isSelected = selected.includes(p?.code)
 
@@ -59,13 +61,19 @@ function BuurtGeoJSONLayer({
       color: isSelected ? '#1e40af' : fillColor,
       weight: isSelected ? 4 : 2,
     }
-  }
+  }, [colorIndicator, minVal, maxVal])
 
   // Create/recreate layer when data or color settings change
   useEffect(() => {
+    const group = parentGroup.current
+    if (!group) return
+
     if (layerRef.current) {
-      map.removeLayer(layerRef.current)
+      group.removeLayer(layerRef.current)
+      layerRef.current = null
     }
+
+    if (!data || !data.features || data.features.length === 0) return
 
     const layer = L.geoJSON(data, {
       style: (feature) => getStyle(feature, selectedRef.current),
@@ -94,7 +102,6 @@ function BuurtGeoJSONLayer({
           if (onBuurtClick) {
             onBuurtClick(p.code)
           }
-          // Open popup after React re-render + DOM reflow settles
           setTimeout(() => {
             L.popup({ autoPan: false })
               .setLatLng(e.latlng)
@@ -105,16 +112,16 @@ function BuurtGeoJSONLayer({
       },
     })
 
-    layer.addTo(map)
+    group.addLayer(layer)
     layerRef.current = layer
 
     return () => {
-      if (layerRef.current) {
-        map.removeLayer(layerRef.current)
+      if (layerRef.current && group) {
+        group.removeLayer(layerRef.current)
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, colorIndicator, minVal, maxVal, map, onBuurtClick])
+  }, [data, colorIndicator, minVal, maxVal, map, onBuurtClick, parentGroup])
 
   // Update styles only when selection changes (without recreating the layer)
   useEffect(() => {
@@ -127,6 +134,60 @@ function BuurtGeoJSONLayer({
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBuurten])
+
+  return null
+}
+
+// Imperative PC6 layer that adds to a FeatureGroup
+function Postcode6GeoJSONLayer({
+  data,
+  parentGroup,
+}: {
+  data: GeoJSON.FeatureCollection | undefined
+  parentGroup: React.RefObject<L.FeatureGroup | null>
+}) {
+  const layerRef = useRef<L.GeoJSON | null>(null)
+
+  useEffect(() => {
+    const group = parentGroup.current
+    if (!group) return
+
+    if (layerRef.current) {
+      group.removeLayer(layerRef.current)
+      layerRef.current = null
+    }
+
+    if (!data || !data.features || data.features.length === 0) return
+
+    const layer = L.geoJSON(data, {
+      style: () => ({
+        color: '#6b7280',
+        weight: 1.5,
+        opacity: 0.4,
+        fillOpacity: 0,
+      }),
+      onEachFeature: (feature, featureLayer) => {
+        const postcode = feature.properties?.postcode
+        if (!postcode) return
+
+        const aantalAdressen = feature.properties?.aantal_adressen
+        const popupContent =
+          `<strong>${postcode}</strong>` +
+          (aantalAdressen != null ? `<br/>${aantalAdressen} adressen` : '')
+
+        featureLayer.bindPopup(popupContent, { autoPan: false })
+      },
+    })
+
+    group.addLayer(layer)
+    layerRef.current = layer
+
+    return () => {
+      if (layerRef.current && group) {
+        group.removeLayer(layerRef.current)
+      }
+    }
+  }, [data, parentGroup])
 
   return null
 }
@@ -173,6 +234,9 @@ export default function BuurtMap({
   selectedBuurten = [],
   onBuurtClick,
 }: BuurtMapProps) {
+  const buurtGroupRef = useRef<L.FeatureGroup>(null)
+  const pc6GroupRef = useRef<L.FeatureGroup>(null)
+
   const { data: buurtenGeoJSON, error: geoError } = useQuery({
     queryKey: ['buurten-geojson', gemeente, minScore, colorIndicator],
     queryFn: () =>
@@ -195,6 +259,12 @@ export default function BuurtMap({
   const { data: scholenGeoJSON } = useQuery({
     queryKey: ['scholen-geojson'],
     queryFn: () => fetchScholenGeoJSON(),
+  })
+
+  const { data: postcode6GeoJSON } = useQuery({
+    queryKey: ['postcode6-geojson', gemeente],
+    queryFn: () => fetchPostcode6GeoJSON({ gemeente: gemeente || undefined }),
+    staleTime: Infinity,
   })
 
   // Calculate min/max for dynamic coloring
@@ -251,18 +321,30 @@ export default function BuurtMap({
           maxZoom={19}
         />
 
-        {buurtenGeoJSON && buurtenGeoJSON.features && buurtenGeoJSON.features.length > 0 && (
-          <BuurtGeoJSONLayer
-            data={buurtenGeoJSON as GeoJSON.FeatureCollection}
-            colorIndicator={colorIndicator}
-            selectedBuurten={selectedBuurten}
-            minVal={minVal}
-            maxVal={maxVal}
-            onBuurtClick={onBuurtClick}
-          />
-        )}
-
         <LayersControl position="topright">
+          <LayersControl.Overlay name="Buurten" checked>
+            <FeatureGroup ref={buurtGroupRef}>
+              <BuurtGeoJSONLayer
+                data={buurtenGeoJSON as GeoJSON.FeatureCollection | undefined}
+                colorIndicator={colorIndicator}
+                selectedBuurten={selectedBuurten}
+                minVal={minVal}
+                maxVal={maxVal}
+                onBuurtClick={onBuurtClick}
+                parentGroup={buurtGroupRef}
+              />
+            </FeatureGroup>
+          </LayersControl.Overlay>
+
+          <LayersControl.Overlay name="Postcodes (PC6)">
+            <FeatureGroup ref={pc6GroupRef}>
+              <Postcode6GeoJSONLayer
+                data={postcode6GeoJSON as GeoJSON.FeatureCollection | undefined}
+                parentGroup={pc6GroupRef}
+              />
+            </FeatureGroup>
+          </LayersControl.Overlay>
+
           <LayersControl.Overlay name="Woningen" checked>
             <LayerGroup>{woningMarkers.map((marker, idx) => {
               const p = marker.properties

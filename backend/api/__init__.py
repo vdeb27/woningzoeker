@@ -7,6 +7,7 @@ from api.watchlist import router as watchlist_router
 from api.markt import router as markt_router
 from api.scholen import router as scholen_router
 from api.voorzieningen import router as voorzieningen_router
+from api.postcode6 import router as postcode6_router
 
 __all__ = [
     "buurten_router",
@@ -16,4 +17,5 @@ __all__ = [
     "markt_router",
     "scholen_router",
     "voorzieningen_router",
+    "postcode6_router",
 ]

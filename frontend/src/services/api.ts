@@ -547,6 +547,18 @@ export async function fetchBuurtenGeoJSON(params?: {
   return response.json()
 }
 
+export async function fetchPostcode6GeoJSON(params?: {
+  gemeente?: string
+}): Promise<GeoJSONFeatureCollection> {
+  const searchParams = new URLSearchParams()
+  if (params?.gemeente) searchParams.append('gemeente', params.gemeente)
+  const response = await fetch(`${API_BASE}/postcode6/geojson?${searchParams}`)
+  if (!response.ok) {
+    throw new Error('Postcode6 grenzen ophalen mislukt')
+  }
+  return response.json()
+}
+
 export async function fetchWoningenGeoJSON(): Promise<GeoJSONFeatureCollection> {
   const response = await fetch(`${API_BASE}/woningen/geojson`)
   if (!response.ok) {
