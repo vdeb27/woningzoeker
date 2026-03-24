@@ -212,7 +212,7 @@ def import_geometrie(dry_run: bool = False, gemeente_filter: str | None = None):
                 if len(features) < PAGE_SIZE:
                     break
 
-                time.sleep(0.5)  # Rate limiting
+                time.sleep(0.1)  # Rate limiting
 
             # Commit per gemeente to preserve progress
             if not dry_run and gemeente_count > 0:
@@ -254,7 +254,7 @@ def import_geometrie(dry_run: bool = False, gemeente_filter: str | None = None):
                     db.commit()
                     print(f"    {batch_count}/{len(remaining)} verwerkt...")
 
-                time.sleep(0.3)
+                time.sleep(0.1)
 
             if not dry_run and batch_count > 0:
                 db.commit()

@@ -8,6 +8,7 @@ from models.prijshistorie import Prijshistorie
 from models.transactie import Transactie
 from models.school import School
 from models.gemeentelijk_monument import GemeentelijkMonument
+from models.postcode6 import Postcode6
 
 __all__ = [
     "Base",
@@ -21,4 +22,5 @@ __all__ = [
     "Transactie",
     "School",
     "GemeentelijkMonument",
+    "Postcode6",
 ]
