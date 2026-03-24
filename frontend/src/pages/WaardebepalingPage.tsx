@@ -357,6 +357,8 @@ function FundaListingPanel({ listing }: { listing: FundaListing }) {
         {detailRow('Energielabel', listing.energielabel)}
         {listing.aangeboden_sinds && detailRow('Aangeboden sinds', listing.aangeboden_sinds)}
         {listing.status !== 'beschikbaar' && detailRow('Status', listing.status)}
+        {listing.verkoopdatum && detailRow('Verkoopdatum', listing.verkoopdatum)}
+        {listing.looptijd_dagen != null && detailRow('Looptijd', `${listing.looptijd_dagen} dagen`)}
       </div>
 
       {/* Eigendom */}

@@ -137,6 +137,9 @@ export interface FundaListing {
   dak_type?: string
   aangeboden_sinds?: string
   status: string
+  // Verkocht-specifiek
+  verkoopdatum?: string
+  looptijd_dagen?: number
 }
 
 export interface EnhancedWaardebepalingResponse {
