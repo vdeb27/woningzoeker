@@ -5,6 +5,7 @@ import {
   EnhancedWaardebepalingRequest,
   EnhancedWaardebepalingResponse,
   MonumentResponse,
+  FundaListing,
   formatPrijs,
   formatM2Prijs,
 } from '../services/api'
@@ -306,6 +307,120 @@ function WoningGegevensColumn({ result }: { result: EnhancedWaardebepalingRespon
   )
 }
 
+function FundaListingPanel({ listing }: { listing: FundaListing }) {
+  const detailRow = (label: string, value: string | number | boolean | undefined | null) => {
+    if (value === undefined || value === null) return null
+    const display = typeof value === 'boolean' ? (value ? 'Ja' : 'Nee') : String(value)
+    return (
+      <div className="flex justify-between text-sm">
+        <span className="text-orange-600">{label}</span>
+        <span className="text-orange-800 font-medium text-right max-w-[60%]">{display}</span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <div className="text-sm text-orange-700 font-medium">Funda listing</div>
+          {listing.status === 'verkocht' && (
+            <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs font-semibold rounded-full border border-red-200 uppercase tracking-wide">
+              Verkocht
+            </span>
+          )}
+          {listing.status === 'onder bod' && (
+            <span className="px-2 py-0.5 bg-yellow-100 text-yellow-700 text-xs font-semibold rounded-full border border-yellow-200 uppercase tracking-wide">
+              Onder bod
+            </span>
+          )}
+        </div>
+        <a
+          href={listing.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-xs text-orange-500 hover:text-orange-700 underline"
+        >
+          Bekijk op Funda &rarr;
+        </a>
+      </div>
+
+      {/* Basis kenmerken */}
+      <div className="space-y-1 mb-3">
+        {listing.vraagprijs && (
+          <div className="flex justify-between">
+            <span className="text-sm text-orange-600">Vraagprijs</span>
+            <span className="text-lg font-semibold text-orange-800">
+              {formatPrijs(listing.vraagprijs)}
+              {listing.vraagprijs_suffix && (
+                <span className="text-xs font-normal ml-1">{listing.vraagprijs_suffix}</span>
+              )}
+            </span>
+          </div>
+        )}
+        {listing.prijs_per_m2 && detailRow('Prijs/m²', formatM2Prijs(listing.prijs_per_m2))}
+        {detailRow('Woonoppervlakte', listing.woonoppervlakte ? `${listing.woonoppervlakte} m²` : undefined)}
+        {detailRow('Perceeloppervlakte', listing.perceeloppervlakte ? `${listing.perceeloppervlakte} m²` : undefined)}
+        {detailRow('Inhoud', listing.inhoud ? `${listing.inhoud} m³` : undefined)}
+        {detailRow('Kamers', listing.kamers ? `${listing.kamers}${listing.slaapkamers ? ` (${listing.slaapkamers} slaapkamers)` : ''}` : undefined)}
+        {detailRow('Badkamers', listing.badkamers)}
+        {detailRow('Bouwjaar', listing.bouwjaar)}
+        {detailRow('Woningtype', listing.woningtype)}
+        {detailRow('Energielabel', listing.energielabel)}
+        {listing.aangeboden_sinds && detailRow('Aangeboden sinds', listing.aangeboden_sinds)}
+        {listing.verkoopdatum && detailRow('Verkoopdatum', listing.verkoopdatum)}
+        {listing.looptijd_dagen != null && detailRow('Looptijd', `${listing.looptijd_dagen} dagen`)}
+      </div>
+
+      {/* Eigendom */}
+      {(listing.eigendom_type || listing.vve_bijdrage || listing.erfpacht_bedrag) && (
+        <div className="border-t border-orange-200 pt-2 mt-2 space-y-1">
+          <div className="text-xs text-orange-500 font-medium uppercase tracking-wide">Eigendom</div>
+          {detailRow('Eigendomssituatie', listing.eigendom_type)}
+          {listing.vve_bijdrage && detailRow('VvE-bijdrage', `€ ${listing.vve_bijdrage}/mnd`)}
+          {listing.erfpacht_bedrag && detailRow('Erfpacht', `€ ${listing.erfpacht_bedrag}/jaar`)}
+        </div>
+      )}
+
+      {/* Tuin & buitenruimte */}
+      {(listing.tuin_type || listing.balkon || listing.dakterras) && (
+        <div className="border-t border-orange-200 pt-2 mt-2 space-y-1">
+          <div className="text-xs text-orange-500 font-medium uppercase tracking-wide">Buitenruimte</div>
+          {detailRow('Tuin', listing.tuin_type)}
+          {listing.tuin_oppervlakte && detailRow('Tuinoppervlakte', `${listing.tuin_oppervlakte} m²`)}
+          {detailRow('Ligging tuin', listing.tuin_orientatie)}
+          {listing.balkon && detailRow('Balkon', true)}
+          {listing.dakterras && detailRow('Dakterras', true)}
+        </div>
+      )}
+
+      {/* Indeling & parkeren */}
+      {(listing.verdiepingen || listing.garage_type || listing.kelder || listing.zolder) && (
+        <div className="border-t border-orange-200 pt-2 mt-2 space-y-1">
+          <div className="text-xs text-orange-500 font-medium uppercase tracking-wide">Indeling & parkeren</div>
+          {detailRow('Woonlagen', listing.verdiepingen)}
+          {detailRow('Garage', listing.garage_type)}
+          {listing.parkeerplaatsen && detailRow('Parkeerplaatsen', listing.parkeerplaatsen)}
+          {detailRow('Parkeren', listing.parkeer_type)}
+          {listing.kelder && detailRow('Kelder', true)}
+          {detailRow('Zolder', listing.zolder)}
+          {detailRow('Berging', listing.berging)}
+        </div>
+      )}
+
+      {/* Extra */}
+      {(listing.isolatie || listing.verwarming || listing.dak_type) && (
+        <div className="border-t border-orange-200 pt-2 mt-2 space-y-1">
+          <div className="text-xs text-orange-500 font-medium uppercase tracking-wide">Technisch</div>
+          {detailRow('Isolatie', listing.isolatie)}
+          {detailRow('Verwarming', listing.verwarming)}
+          {detailRow('Dak', listing.dak_type)}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function AnalyseColumn({ result, onCopy, copied }: {
   result: EnhancedWaardebepalingResponse
   onCopy: (waarde: number) => void
@@ -419,6 +534,11 @@ function AnalyseColumn({ result, onCopy, copied }: {
           </div>
         )}
       </div>
+
+      {/* Funda listing */}
+      {result.funda_listing && (
+        <FundaListingPanel listing={result.funda_listing} />
+      )}
 
       {/* Marktindicatoren */}
       {(result.markt_gem_prijs || result.markt_overbiedpct || result.markt_verkooptijd) && (
