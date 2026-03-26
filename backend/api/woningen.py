@@ -17,6 +17,9 @@ class WoningBase(BaseModel):
     adres: str
     postcode: Optional[str] = None
     plaats: Optional[str] = None
+    huisnummer: Optional[int] = None
+    huisletter: Optional[str] = None
+    toevoeging: Optional[str] = None
     vraagprijs: Optional[int] = None
     woonoppervlakte: Optional[int] = None
 
@@ -85,6 +88,9 @@ def get_woningen_geojson(
                 "adres": woning.adres,
                 "postcode": woning.postcode,
                 "plaats": woning.plaats,
+                "huisnummer": woning.huisnummer,
+                "huisletter": woning.huisletter,
+                "toevoeging": woning.toevoeging,
                 "vraagprijs": woning.vraagprijs,
                 "woonoppervlakte": woning.woonoppervlakte,
                 "energielabel": woning.energielabel,
