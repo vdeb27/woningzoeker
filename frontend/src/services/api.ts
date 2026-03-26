@@ -255,6 +255,9 @@ export interface Woning {
   adres: string
   postcode?: string
   plaats?: string
+  huisnummer?: number
+  huisletter?: string
+  toevoeging?: string
   vraagprijs?: number
   woonoppervlakte?: number
   kamers?: number

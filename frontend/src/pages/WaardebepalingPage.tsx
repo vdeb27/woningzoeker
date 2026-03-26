@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   berekenWaardeVoorAdres,
@@ -660,7 +661,9 @@ export default function WaardebepalingPage() {
     setTimeout(() => setCopied(false), 2000)
   }
 
+  const [searchParams, setSearchParams] = useSearchParams()
   const queryClient = useQueryClient()
+  const autoSubmitted = useRef(false)
 
   const mutation = useMutation({
     mutationFn: berekenWaardeVoorAdres,
@@ -669,6 +672,28 @@ export default function WaardebepalingPage() {
       queryClient.invalidateQueries({ queryKey: ['woningen-geojson'] })
     },
   })
+
+  // Auto-fill en auto-submit vanuit URL-parameters (bijv. vanuit WoningCard)
+  useEffect(() => {
+    if (autoSubmitted.current) return
+    const postcode = searchParams.get('postcode')
+    const huisnummer = searchParams.get('huisnummer')
+    if (postcode && huisnummer) {
+      autoSubmitted.current = true
+      const data: EnhancedWaardebepalingRequest = {
+        postcode,
+        huisnummer: Number(huisnummer),
+        huisletter: searchParams.get('huisletter') || undefined,
+        toevoeging: searchParams.get('toevoeging') || undefined,
+        woonoppervlakte: searchParams.get('woonoppervlakte') ? Number(searchParams.get('woonoppervlakte')) : undefined,
+        vraagprijs: searchParams.get('vraagprijs') ? Number(searchParams.get('vraagprijs')) : undefined,
+        woningtype: searchParams.get('woningtype') || undefined,
+      }
+      setFormData(data)
+      mutation.mutate(data)
+      setSearchParams({}, { replace: true })
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
