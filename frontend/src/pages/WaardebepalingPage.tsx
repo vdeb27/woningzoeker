@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useLocation } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   berekenWaardeVoorAdres,
@@ -661,9 +661,8 @@ export default function WaardebepalingPage() {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const [searchParams, setSearchParams] = useSearchParams()
+  const location = useLocation()
   const queryClient = useQueryClient()
-  const autoSubmitted = useRef(false)
 
   const mutation = useMutation({
     mutationFn: berekenWaardeVoorAdres,
@@ -673,27 +672,17 @@ export default function WaardebepalingPage() {
     },
   })
 
-  // Auto-fill en auto-submit vanuit URL-parameters (bijv. vanuit WoningCard)
+  // Auto-fill en auto-submit vanuit WoningCard (via navigate state)
   useEffect(() => {
-    if (autoSubmitted.current) return
-    const postcode = searchParams.get('postcode')
-    const huisnummer = searchParams.get('huisnummer')
-    if (postcode && huisnummer) {
-      autoSubmitted.current = true
-      const data: EnhancedWaardebepalingRequest = {
-        postcode,
-        huisnummer: Number(huisnummer),
-        huisletter: searchParams.get('huisletter') || undefined,
-        toevoeging: searchParams.get('toevoeging') || undefined,
-        woonoppervlakte: searchParams.get('woonoppervlakte') ? Number(searchParams.get('woonoppervlakte')) : undefined,
-        vraagprijs: searchParams.get('vraagprijs') ? Number(searchParams.get('vraagprijs')) : undefined,
-        woningtype: searchParams.get('woningtype') || undefined,
-      }
+    const state = location.state as { autoWaardebepaling?: EnhancedWaardebepalingRequest } | null
+    if (state?.autoWaardebepaling) {
+      const data = state.autoWaardebepaling
       setFormData(data)
       mutation.mutate(data)
-      setSearchParams({}, { replace: true })
+      // State opschonen zodat refresh niet opnieuw triggert
+      window.history.replaceState({}, '', '/')
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [location.state]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
