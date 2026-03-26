@@ -23,6 +23,9 @@ class Woning(Base):
     postcode = Column(String(10), index=True)
     pc6 = Column(String(6), index=True)
     plaats = Column(String(100))
+    huisnummer = Column(Integer)
+    huisletter = Column(String(5))
+    toevoeging = Column(String(10))
     buurt_code = Column(String(20), ForeignKey("buurten.code"), index=True)
 
     # Geocoordinates

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { fetchWoningen, addToWatchlist, deleteWoning, Woning, formatPrijs } from '../services/api'
 
@@ -64,6 +65,14 @@ function WoningCard({ woning, onAddToWatchlist, onDelete }: {
       <div className="mt-4 flex justify-between items-center">
         <span className="text-xs text-gray-500">{woning.woningtype}</span>
         <div className="flex gap-2">
+          {woning.postcode && woning.huisnummer && (
+            <Link
+              to={`/?postcode=${encodeURIComponent(woning.postcode)}&huisnummer=${woning.huisnummer}${woning.huisletter ? `&huisletter=${woning.huisletter}` : ''}${woning.toevoeging ? `&toevoeging=${encodeURIComponent(woning.toevoeging)}` : ''}${woning.woonoppervlakte ? `&woonoppervlakte=${woning.woonoppervlakte}` : ''}${woning.vraagprijs ? `&vraagprijs=${woning.vraagprijs}` : ''}${woning.woningtype ? `&woningtype=${encodeURIComponent(woning.woningtype)}` : ''}`}
+              className="text-sm px-3 py-1 rounded bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors"
+            >
+              Waardebepaling
+            </Link>
+          )}
           <button
             onClick={handleAdd}
             disabled={added}
