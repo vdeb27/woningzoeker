@@ -44,6 +44,7 @@ Thumbs.db
 # Data
 data/woningzoeker.db
 data/cache/
+*.bak
 
 # Logs
 *.log
