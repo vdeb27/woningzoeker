@@ -761,10 +761,14 @@ def _lookup_wkpb(postcode: str, huisnummer: int) -> Dict[str, Any]:
         return result
 
     # Step 2: Query WKPB WFS with small bbox around the point
-    buf = 5  # 5 meter buffer
+    buf = 5  # 5 meter buffer for bbox query
     bbox = f"{x - buf},{y - buf},{x + buf},{y + buf},EPSG:28992"
 
     try:
+        from shapely.geometry import Point, shape
+
+        address_point = Point(x, y)
+
         r = requests.get(
             WKPB_WFS_URL,
             params={
@@ -782,6 +786,14 @@ def _lookup_wkpb(postcode: str, huisnummer: int) -> Dict[str, Any]:
         features = r.json().get("features", [])
 
         for feat in features:
+            # Verify the address point actually falls within the WKPB polygon,
+            # not just within the bbox used for the query
+            geom = feat.get("geometry")
+            if geom:
+                polygon = shape(geom)
+                if not polygon.contains(address_point):
+                    continue
+
             props = feat.get("properties", {})
             code = props.get("grondslagCode", "")
             omschr = props.get("grondslagOmschrijving", "")
