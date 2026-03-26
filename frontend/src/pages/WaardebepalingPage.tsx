@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useLocation } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   berekenWaardeVoorAdres,
@@ -660,6 +661,7 @@ export default function WaardebepalingPage() {
     setTimeout(() => setCopied(false), 2000)
   }
 
+  const location = useLocation()
   const queryClient = useQueryClient()
 
   const mutation = useMutation({
@@ -669,6 +671,18 @@ export default function WaardebepalingPage() {
       queryClient.invalidateQueries({ queryKey: ['woningen-geojson'] })
     },
   })
+
+  // Auto-fill en auto-submit vanuit WoningCard (via navigate state)
+  useEffect(() => {
+    const state = location.state as { autoWaardebepaling?: EnhancedWaardebepalingRequest } | null
+    if (state?.autoWaardebepaling) {
+      const data = state.autoWaardebepaling
+      setFormData(data)
+      mutation.mutate(data)
+      // State opschonen zodat refresh niet opnieuw triggert
+      window.history.replaceState({}, '', '/')
+    }
+  }, [location.state]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()

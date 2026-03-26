@@ -1282,6 +1282,9 @@ def bereken_waarde_voor_adres(
             # Update existing woning
             matched.adres = adres or matched.adres
             matched.plaats = woonplaats or matched.plaats
+            matched.huisnummer = request.huisnummer
+            matched.huisletter = request.huisletter or matched.huisletter
+            matched.toevoeging = request.toevoeging or matched.toevoeging
             matched.vraagprijs = request.vraagprijs or matched.vraagprijs
             matched.woonoppervlakte = woonoppervlakte or matched.woonoppervlakte
             matched.woningtype = request.woningtype or matched.woningtype
@@ -1344,6 +1347,9 @@ def bereken_waarde_voor_adres(
                 postcode=request.postcode,
                 pc6=pc6,
                 plaats=woonplaats,
+                huisnummer=request.huisnummer,
+                huisletter=request.huisletter or None,
+                toevoeging=request.toevoeging or None,
                 buurt_code=buurt_code,
                 vraagprijs=request.vraagprijs,
                 woonoppervlakte=woonoppervlakte,
