@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from collectors.luchtmeetnet_collector import create_luchtmeetnet_collector
 from collectors.rivm_pfas_collector import create_rivm_pfas_collector
+from collectors.pfas_bodemkaart_collector import create_pfas_bodemkaart_collector
 
 router = APIRouter(prefix="/api/milieu", tags=["milieu"])
 
@@ -24,13 +25,25 @@ class LuchtmeetnetResponse(BaseModel):
     jaar: Optional[int] = None
 
 
+class BodemkaartResponse(BaseModel):
+    in_den_haag: bool = False
+    functie: Optional[str] = None
+    zone_naam: Optional[str] = None
+    kwaliteit_bovengrond: Optional[str] = None
+    kwaliteit_ondergrond: Optional[str] = None
+    kwaliteit_ranking: int = 0
+
+
 class PFASResponse(BaseModel):
+    # RIVM landelijke monsters
     samples_within_radius: int = 0
     max_pfoa: Optional[float] = None
     max_pfos: Optional[float] = None
     has_contamination: bool = False
     nearest_sample_distance_km: Optional[float] = None
     search_radius_km: float = 1.0
+    # Gemeentelijke bodemkaart
+    bodemkaart: Optional[BodemkaartResponse] = None
 
 
 class StationInfo(BaseModel):
@@ -76,9 +89,24 @@ def get_pfas(
     lng: float = Query(..., description="Lengtegraad (WGS84)"),
     radius_km: float = Query(1.0, description="Zoekradius in km"),
 ):
-    """PFAS bodemverontreiniging nabij een locatie."""
+    """PFAS bodemverontreiniging nabij een locatie (RIVM + gemeentelijke bodemkaart)."""
     collector = create_rivm_pfas_collector(search_radius_km=radius_km)
     result = collector.get_for_location(lat, lng)
+
+    # Gemeentelijke bodemkaart
+    bodemkaart_collector = create_pfas_bodemkaart_collector()
+    bk = bodemkaart_collector.get_for_location(lat, lng)
+    bodemkaart = None
+    if bk.in_den_haag:
+        bodemkaart = BodemkaartResponse(
+            in_den_haag=True,
+            functie=bk.functie,
+            zone_naam=bk.zone_naam,
+            kwaliteit_bovengrond=bk.kwaliteit_bovengrond,
+            kwaliteit_ondergrond=bk.kwaliteit_ondergrond,
+            kwaliteit_ranking=bk.kwaliteit_ranking,
+        )
+
     return PFASResponse(
         samples_within_radius=result.samples_within_radius,
         max_pfoa=result.max_pfoa,
@@ -86,6 +114,7 @@ def get_pfas(
         has_contamination=result.has_contamination,
         nearest_sample_distance_km=result.nearest_sample_distance_km,
         search_radius_km=result.search_radius_km,
+        bodemkaart=bodemkaart,
     )
 
 
