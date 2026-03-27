@@ -84,6 +84,17 @@ from collectors.pdok_beschermde_gebieden_collector import (
     BeschermdGebiedResult,
     create_pdok_beschermde_gebieden_collector,
 )
+from collectors.luchtmeetnet_collector import (
+    LuchtmeetnetCollector,
+    LuchtmeetnetResult,
+    create_luchtmeetnet_collector,
+)
+from collectors.rivm_pfas_collector import (
+    RIVMPFASCollector,
+    PFASResult,
+    PFASSample,
+    create_rivm_pfas_collector,
+)
 from collectors.funda_collector import (
     FundaCollector,
     PropertyListing,
@@ -168,6 +179,15 @@ __all__ = [
     "PDOKBeschermdeGebiedenCollector",
     "BeschermdGebiedResult",
     "create_pdok_beschermde_gebieden_collector",
+    # Luchtmeetnet
+    "LuchtmeetnetCollector",
+    "LuchtmeetnetResult",
+    "create_luchtmeetnet_collector",
+    # RIVM PFAS
+    "RIVMPFASCollector",
+    "PFASResult",
+    "PFASSample",
+    "create_rivm_pfas_collector",
     # Funda
     "FundaCollector",
     "PropertyListing",

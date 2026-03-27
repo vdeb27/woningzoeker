@@ -1,13 +1,13 @@
 """
 Bulk download and scoring of neighborhood data.
 
-Fetches data from all collectors (CBS Kerncijfers, Leefbaarometer, CBS Nabijheid, RIVM),
-and writes to the database incrementally after each source completes.
-Scores are recalculated at the end using all available data.
+Fetches data from all collectors (CBS Kerncijfers, Leefbaarometer, CBS Nabijheid,
+CBS Extra, RIVM, Luchtmeetnet, PFAS) and writes to the database incrementally
+after each source completes. Scores are recalculated at the end using all available data.
 
 Usage:
     cd backend && source venv/bin/activate
-    python bulk_buurt_data.py [--skip-rivm] [--clear-cache]
+    python bulk_buurt_data.py [--skip-rivm] [--skip-luchtmeetnet] [--skip-pfas] [--clear-cache]
 """
 
 from __future__ import annotations
@@ -30,6 +30,9 @@ from collectors.leefbaarometer_collector import create_leefbaarometer_collector
 from collectors.cbs_nabijheid_collector import create_cbs_nabijheid_collector
 from collectors.rivm_collector import create_rivm_collector
 from collectors.cbs_extra_collector import create_cbs_extra_collector
+from collectors.luchtmeetnet_collector import create_luchtmeetnet_collector
+from collectors.rivm_pfas_collector import create_rivm_pfas_collector
+from utils.geo import compute_centroid
 from services.scoring import ScoringService
 
 
@@ -71,7 +74,7 @@ def _merge_indicatoren(existing: dict | None, new_data: dict) -> dict:
 
 def step_cbs_kerncijfers(session) -> int:
     """Stap 1: CBS Kerncijfers ophalen en direct naar DB schrijven."""
-    print("=== Stap 1/5: CBS Kerncijfers laden ===")
+    print("=== Stap 1/7: CBS Kerncijfers laden ===")
     cbs = CBSBuurtCollector()
     buurten = cbs.get_all_buurten()
     print(f"  {len(buurten)} buurten geladen")
@@ -109,7 +112,7 @@ def step_cbs_kerncijfers(session) -> int:
 
 def step_leefbaarometer(session) -> int:
     """Stap 2: Leefbaarometer data ophalen en mergen in bestaande buurten."""
-    print("\n=== Stap 2/5: Leefbaarometer laden ===")
+    print("\n=== Stap 2/7: Leefbaarometer laden ===")
     try:
         lbm = create_leefbaarometer_collector()
         lbm_data = lbm.get_all()
@@ -145,7 +148,7 @@ def step_leefbaarometer(session) -> int:
 
 def step_cbs_nabijheid(session) -> int:
     """Stap 3: CBS Nabijheid ophalen en mergen."""
-    print("\n=== Stap 3/5: CBS Nabijheid laden ===")
+    print("\n=== Stap 3/7: CBS Nabijheid laden ===")
     try:
         nabijheid = create_cbs_nabijheid_collector()
         nabijheid_data = nabijheid.get_all()
@@ -170,7 +173,7 @@ def step_cbs_nabijheid(session) -> int:
 
 def step_cbs_extra(session) -> int:
     """Stap 4: CBS Extra (misdrijven, arbeid, SES, opleiding, bodem)."""
-    print("\n=== Stap 4/5: CBS Extra laden ===")
+    print("\n=== Stap 4/7: CBS Extra laden ===")
     try:
         extra = create_cbs_extra_collector()
         extra_data = extra.get_all_buurten()
@@ -195,7 +198,7 @@ def step_cbs_extra(session) -> int:
 
 def step_rivm(session) -> int:
     """Stap 5: RIVM Atlas (geluidhinder, slaapverstoring, tevredenheid)."""
-    print("\n=== Stap 5/5: RIVM Atlas laden ===")
+    print("\n=== Stap 5/7: RIVM Atlas laden ===")
     try:
         rivm = create_rivm_collector()
         rivm_data = rivm.get_all()
@@ -220,6 +223,86 @@ def step_rivm(session) -> int:
 
     session.commit()
     print(f"  {count} buurten bijgewerkt met RIVM data")
+    return count
+
+
+def step_luchtmeetnet(session) -> int:
+    """Stap 6: Luchtmeetnet luchtkwaliteit per buurt."""
+    print("\n=== Stap 6/7: Luchtmeetnet laden ===")
+    try:
+        lucht = create_luchtmeetnet_collector()
+    except Exception as e:
+        print(f"  Luchtmeetnet laden mislukt: {e}")
+        return 0
+
+    buurten = session.query(Buurt).filter(Buurt.geometrie.isnot(None)).all()
+    count = 0
+    for buurt in buurten:
+        centroid = compute_centroid(buurt.geometrie)
+        if not centroid:
+            continue
+
+        result = lucht.get_for_location(centroid[0], centroid[1])
+        if not result.within_max_distance:
+            continue
+
+        lucht_data = {}
+        if result.no2_avg is not None:
+            lucht_data["lucht_no2_avg"] = result.no2_avg
+        if result.pm10_avg is not None:
+            lucht_data["lucht_pm10_avg"] = result.pm10_avg
+        if result.pm25_avg is not None:
+            lucht_data["lucht_pm25_avg"] = result.pm25_avg
+        if result.o3_avg is not None:
+            lucht_data["lucht_o3_avg"] = result.o3_avg
+        lucht_data["lucht_station_afstand_km"] = result.distance_km
+        lucht_data["lucht_station_naam"] = result.station_naam
+        lucht_data["lucht_station_type"] = result.station_type
+
+        buurt.indicatoren = _merge_indicatoren(buurt.indicatoren, lucht_data)
+        count += 1
+
+    session.commit()
+    print(f"  {count} buurten bijgewerkt met luchtkwaliteitsdata")
+    return count
+
+
+def step_pfas(session) -> int:
+    """Stap 7: RIVM PFAS bodemverontreiniging per buurt."""
+    print("\n=== Stap 7/7: RIVM PFAS laden ===")
+    try:
+        pfas = create_rivm_pfas_collector()
+    except Exception as e:
+        print(f"  PFAS laden mislukt: {e}")
+        return 0
+
+    buurten = session.query(Buurt).filter(Buurt.geometrie.isnot(None)).all()
+    count = 0
+    for buurt in buurten:
+        centroid = compute_centroid(buurt.geometrie)
+        if not centroid:
+            continue
+
+        result = pfas.get_for_location(centroid[0], centroid[1])
+        if result.samples_within_radius == 0:
+            continue
+
+        pfas_data = {
+            "pfas_samples_nabij": result.samples_within_radius,
+            "pfas_has_contamination": result.has_contamination,
+        }
+        if result.max_pfoa is not None:
+            pfas_data["pfas_max_pfoa"] = result.max_pfoa
+        if result.max_pfos is not None:
+            pfas_data["pfas_max_pfos"] = result.max_pfos
+        if result.nearest_sample_distance_km is not None:
+            pfas_data["pfas_dichtstbij_km"] = result.nearest_sample_distance_km
+
+        buurt.indicatoren = _merge_indicatoren(buurt.indicatoren, pfas_data)
+        count += 1
+
+    session.commit()
+    print(f"  {count} buurten bijgewerkt met PFAS data")
     return count
 
 
@@ -302,6 +385,7 @@ def recalculate_scores(session):
         buurt.score_leefbaarheid = _safe_float(row.get("score_leefbaarheid"))
         buurt.score_energie = _safe_float(row.get("score_energie"))
         buurt.score_demografie = _safe_float(row.get("score_demografie"))
+        buurt.score_milieu = _safe_float(row.get("score_milieu"))
         count += 1
 
     session.commit()
@@ -311,6 +395,8 @@ def recalculate_scores(session):
 def main():
     parser = argparse.ArgumentParser(description="Bulk download buurtdata")
     parser.add_argument("--skip-rivm", action="store_true", help="Skip RIVM Atlas data")
+    parser.add_argument("--skip-luchtmeetnet", action="store_true", help="Skip Luchtmeetnet data")
+    parser.add_argument("--skip-pfas", action="store_true", help="Skip PFAS data")
     parser.add_argument("--clear-cache", action="store_true", help="Clear cache first")
     args = parser.parse_args()
 
@@ -318,7 +404,8 @@ def main():
         import shutil
         cache_dirs = [
             Path(__file__).parent.parent / "data" / "cache" / d
-            for d in ["leefbaarometer", "cbs_nabijheid", "rivm", "cbs_extra"]
+            for d in ["leefbaarometer", "cbs_nabijheid", "rivm", "cbs_extra",
+                       "luchtmeetnet", "pfas"]
         ]
         for d in cache_dirs:
             if d.exists():
@@ -340,6 +427,16 @@ def main():
             step_rivm(session)
         else:
             print("\n=== RIVM overgeslagen (--skip-rivm) ===")
+
+        if not args.skip_luchtmeetnet:
+            step_luchtmeetnet(session)
+        else:
+            print("\n=== Luchtmeetnet overgeslagen (--skip-luchtmeetnet) ===")
+
+        if not args.skip_pfas:
+            step_pfas(session)
+        else:
+            print("\n=== PFAS overgeslagen (--skip-pfas) ===")
 
         # Scores berekenen over alle beschikbare data
         recalculate_scores(session)
