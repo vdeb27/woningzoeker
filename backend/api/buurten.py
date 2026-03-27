@@ -61,6 +61,7 @@ class BuurtDetail(BuurtBase):
     score_woningen: Optional[float] = None
     score_bereikbaarheid: Optional[float] = None
     score_leefbaarheid: Optional[float] = None
+    score_milieu: Optional[float] = None
     score_coverage: Optional[float] = None
 
     leefbaarometer_score: Optional[float] = None

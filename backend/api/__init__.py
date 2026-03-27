@@ -9,6 +9,7 @@ from api.scholen import router as scholen_router
 from api.voorzieningen import router as voorzieningen_router
 from api.postcode6 import router as postcode6_router
 from api.bereikbaarheid import router as bereikbaarheid_router
+from api.milieu import router as milieu_router
 
 __all__ = [
     "buurten_router",
@@ -20,4 +21,5 @@ __all__ = [
     "voorzieningen_router",
     "postcode6_router",
     "bereikbaarheid_router",
+    "milieu_router",
 ]

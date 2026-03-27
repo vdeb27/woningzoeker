@@ -46,6 +46,7 @@ class Buurt(Base):
     score_energie = Column(Float)
     score_demografie = Column(Float)
     score_leefbaarheid = Column(Float)
+    score_milieu = Column(Float)
 
     # Leefbaarometer
     leefbaarometer_score = Column(Float)
