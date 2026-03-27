@@ -18,7 +18,7 @@ logging.basicConfig(
 env_path = Path(__file__).parent / ".env"
 load_dotenv(env_path)
 
-from api import buurten_router, woningen_router, waardebepaling_router, watchlist_router, markt_router, scholen_router, voorzieningen_router, postcode6_router, bereikbaarheid_router
+from api import buurten_router, woningen_router, waardebepaling_router, watchlist_router, markt_router, scholen_router, voorzieningen_router, postcode6_router, bereikbaarheid_router, milieu_router
 from models.database import init_db
 from models import Buurt, Woning, WatchlistItem, Prijshistorie, School, Postcode6  # noqa: F401 - ensure models are loaded
 
@@ -41,6 +41,12 @@ async def lifespan(app: FastAPI):
             conn.execute(text("ALTER TABLE woningen ADD COLUMN longitude REAL"))
         # Remove hardcoded sample woningen
         conn.execute(text("DELETE FROM woningen WHERE funda_id LIKE 'sample_%'"))
+
+        # Migrate: add score_milieu column if missing
+        buurt_columns = [c["name"] for c in inspector.get_columns("buurten")]
+        if "score_milieu" not in buurt_columns:
+            conn.execute(text("ALTER TABLE buurten ADD COLUMN score_milieu REAL"))
+
         conn.commit()
 
     yield
@@ -76,6 +82,7 @@ app.include_router(scholen_router)
 app.include_router(voorzieningen_router)
 app.include_router(postcode6_router)
 app.include_router(bereikbaarheid_router)
+app.include_router(milieu_router)
 
 
 @app.get("/")
