@@ -95,6 +95,11 @@ from collectors.rivm_pfas_collector import (
     PFASSample,
     create_rivm_pfas_collector,
 )
+from collectors.pfas_bodemkaart_collector import (
+    PFASBodemkaartCollector,
+    BodemkaartResult,
+    create_pfas_bodemkaart_collector,
+)
 from collectors.funda_collector import (
     FundaCollector,
     PropertyListing,
@@ -188,6 +193,10 @@ __all__ = [
     "PFASResult",
     "PFASSample",
     "create_rivm_pfas_collector",
+    # PFAS Bodemkaart Den Haag
+    "PFASBodemkaartCollector",
+    "BodemkaartResult",
+    "create_pfas_bodemkaart_collector",
     # Funda
     "FundaCollector",
     "PropertyListing",

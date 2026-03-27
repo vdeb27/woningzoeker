@@ -32,6 +32,7 @@ from collectors.rivm_collector import create_rivm_collector
 from collectors.cbs_extra_collector import create_cbs_extra_collector
 from collectors.luchtmeetnet_collector import create_luchtmeetnet_collector
 from collectors.rivm_pfas_collector import create_rivm_pfas_collector
+from collectors.pfas_bodemkaart_collector import create_pfas_bodemkaart_collector
 from utils.geo import compute_centroid
 from services.scoring import ScoringService
 
@@ -268,13 +269,22 @@ def step_luchtmeetnet(session) -> int:
 
 
 def step_pfas(session) -> int:
-    """Stap 7: RIVM PFAS bodemverontreiniging per buurt."""
-    print("\n=== Stap 7/7: RIVM PFAS laden ===")
+    """Stap 7: PFAS data (RIVM monsters + gemeentelijke bodemkaart)."""
+    print("\n=== Stap 7/7: PFAS laden ===")
+
+    # RIVM landelijke monsters
     try:
         pfas = create_rivm_pfas_collector()
     except Exception as e:
-        print(f"  PFAS laden mislukt: {e}")
-        return 0
+        print(f"  RIVM PFAS laden mislukt: {e}")
+        pfas = None
+
+    # Gemeentelijke bodemkwaliteitskaart Den Haag
+    try:
+        bodemkaart = create_pfas_bodemkaart_collector()
+    except Exception as e:
+        print(f"  PFAS bodemkaart laden mislukt: {e}")
+        bodemkaart = None
 
     buurten = session.query(Buurt).filter(Buurt.geometrie.isnot(None)).all()
     count = 0
@@ -283,23 +293,33 @@ def step_pfas(session) -> int:
         if not centroid:
             continue
 
-        result = pfas.get_for_location(centroid[0], centroid[1])
-        if result.samples_within_radius == 0:
-            continue
+        pfas_data: dict = {}
 
-        pfas_data = {
-            "pfas_samples_nabij": result.samples_within_radius,
-            "pfas_has_contamination": result.has_contamination,
-        }
-        if result.max_pfoa is not None:
-            pfas_data["pfas_max_pfoa"] = result.max_pfoa
-        if result.max_pfos is not None:
-            pfas_data["pfas_max_pfos"] = result.max_pfos
-        if result.nearest_sample_distance_km is not None:
-            pfas_data["pfas_dichtstbij_km"] = result.nearest_sample_distance_km
+        # RIVM monsters (landelijk)
+        if pfas:
+            result = pfas.get_for_location(centroid[0], centroid[1])
+            if result.samples_within_radius > 0:
+                pfas_data["pfas_samples_nabij"] = result.samples_within_radius
+                pfas_data["pfas_has_contamination"] = result.has_contamination
+                if result.max_pfoa is not None:
+                    pfas_data["pfas_max_pfoa"] = result.max_pfoa
+                if result.max_pfos is not None:
+                    pfas_data["pfas_max_pfos"] = result.max_pfos
+                if result.nearest_sample_distance_km is not None:
+                    pfas_data["pfas_dichtstbij_km"] = result.nearest_sample_distance_km
 
-        buurt.indicatoren = _merge_indicatoren(buurt.indicatoren, pfas_data)
-        count += 1
+        # Gemeentelijke bodemkaart (Den Haag)
+        if bodemkaart:
+            bk_result = bodemkaart.get_for_location(centroid[0], centroid[1])
+            if bk_result.in_den_haag:
+                pfas_data["pfas_bodemkaart_zone"] = bk_result.zone_naam
+                pfas_data["pfas_bodemkaart_kwaliteit_bg"] = bk_result.kwaliteit_bovengrond
+                pfas_data["pfas_bodemkaart_kwaliteit_og"] = bk_result.kwaliteit_ondergrond
+                pfas_data["pfas_bodemkaart_ranking"] = bk_result.kwaliteit_ranking
+
+        if pfas_data:
+            buurt.indicatoren = _merge_indicatoren(buurt.indicatoren, pfas_data)
+            count += 1
 
     session.commit()
     print(f"  {count} buurten bijgewerkt met PFAS data")
@@ -405,7 +425,7 @@ def main():
         cache_dirs = [
             Path(__file__).parent.parent / "data" / "cache" / d
             for d in ["leefbaarometer", "cbs_nabijheid", "rivm", "cbs_extra",
-                       "luchtmeetnet", "pfas"]
+                       "luchtmeetnet", "pfas", "pfas_bodemkaart"]
         ]
         for d in cache_dirs:
             if d.exists():

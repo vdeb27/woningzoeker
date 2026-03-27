@@ -84,6 +84,7 @@ categories:
       - lucht_pm10
       - lucht_pm25
       - pfas_verontreiniging
+      - pfas_bodemkaart
     color: "#10b981"
     weight: 0.07
 
@@ -415,8 +416,17 @@ indicators:
   pfas_verontreiniging:
     column: pfas_max_pfos
     higher_is_better: false
-    weight: 0.01
+    weight: 0.005
     category: milieu
     label: PFAS verontreiniging (PFOS)
     unit: µg/kg
-    description: Maximale PFOS-concentratie in bodemmonsters binnen zoekradius
+    description: Maximale PFOS-concentratie in bodemmonsters binnen zoekradius (RIVM landelijk)
+
+  pfas_bodemkaart:
+    column: pfas_bodemkaart_ranking
+    higher_is_better: false
+    weight: 0.005
+    category: milieu
+    label: PFAS bodemkwaliteit (gemeentelijk)
+    unit: klasse
+    description: Bodemkwaliteitsklasse PFAS Den Haag (1=schoon, 2=wonen, 3=industrie)
