@@ -18,7 +18,7 @@ logging.basicConfig(
 env_path = Path(__file__).parent / ".env"
 load_dotenv(env_path)
 
-from api import buurten_router, woningen_router, waardebepaling_router, watchlist_router, markt_router, scholen_router, voorzieningen_router, postcode6_router
+from api import buurten_router, woningen_router, waardebepaling_router, watchlist_router, markt_router, scholen_router, voorzieningen_router, postcode6_router, bereikbaarheid_router
 from models.database import init_db
 from models import Buurt, Woning, WatchlistItem, Prijshistorie, School, Postcode6  # noqa: F401 - ensure models are loaded
 
@@ -75,6 +75,7 @@ app.include_router(markt_router)
 app.include_router(scholen_router)
 app.include_router(voorzieningen_router)
 app.include_router(postcode6_router)
+app.include_router(bereikbaarheid_router)
 
 
 @app.get("/")
@@ -91,6 +92,8 @@ def root():
             "markt": "/api/markt",
             "scholen": "/api/scholen",
             "voorzieningen": "/api/voorzieningen",
+            "bereikbaarheid": "/api/woningen/{id}/bereikbaarheid",
+            "reistijd": "/api/locatie/reistijd",
             "postcode6": "/api/postcode6",
         },
     }

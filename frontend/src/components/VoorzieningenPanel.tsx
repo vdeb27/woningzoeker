@@ -9,6 +9,7 @@ import {
   VoorzieningItem,
   CBSAfstand,
   FietsafstandItem,
+  OVData,
 } from '../services/api'
 
 // Fix default marker icons for Vite bundler
@@ -204,10 +205,175 @@ function FietsafstandSection({ fietsafstanden }: { fietsafstanden: FietsafstandI
   )
 }
 
+const OV_TYPE_ICONS: Record<string, string> = {
+  trein: '\u{1F686}',
+  metro: '\u{1F687}',
+  tram: '\u{1F68A}',
+  bus: '\u{1F68C}',
+}
+
+const OV_TYPE_COLORS: Record<string, string> = {
+  trein: '#f97316',
+  metro: '#ef4444',
+  tram: '#3b82f6',
+  bus: '#6b7280',
+}
+
+function ovAfstandKleur(m: number): string {
+  if (m <= 300) return 'text-green-700 bg-green-100'
+  if (m <= 500) return 'text-yellow-700 bg-yellow-100'
+  if (m <= 800) return 'text-orange-700 bg-orange-100'
+  return 'text-red-700 bg-red-100'
+}
+
+function ovReistijdKleur(min: number): string {
+  if (min <= 20) return 'text-green-700 bg-green-100'
+  if (min <= 40) return 'text-yellow-700 bg-yellow-100'
+  return 'text-red-700 bg-red-100'
+}
+
+function OVScoreBar({ score, breakdown }: { score: number; breakdown: Record<string, number> }) {
+  const pct = Math.round(score * 100)
+  const color = pct >= 60 ? 'bg-green-500' : pct >= 35 ? 'bg-yellow-500' : 'bg-red-500'
+
+  const breakdownLabels: Record<string, string> = {
+    afstand_halte: 'Afstand halte',
+    type_vervoer: 'Type vervoer',
+    frequentie: 'Frequentie',
+    verbinding_centrum: 'Verbinding centrum',
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <div className="flex-1 bg-gray-200 rounded-full h-2.5">
+          <div className={`${color} h-2.5 rounded-full`} style={{ width: `${pct}%` }} />
+        </div>
+        <span className="text-sm font-medium text-gray-700">{pct}/100</span>
+      </div>
+      <div className="flex gap-3 mt-1.5 flex-wrap">
+        {Object.entries(breakdown).map(([key, value]) => (
+          <span key={key} className="text-[10px] text-gray-400">
+            {breakdownLabels[key] || key}: {Math.round(value * 100)}%
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function OVSection({ ovData, fietsafstanden }: { ovData: OVData; fietsafstanden: FietsafstandItem[] }) {
+  const [showAllHaltes, setShowAllHaltes] = useState(false)
+
+  const haltesToShow = showAllHaltes ? ovData.haltes_nabij : ovData.haltes_nabij.slice(0, 3)
+  const hasReistijden = ovData.reistijden_werklocaties.length > 0
+
+  return (
+    <div className="space-y-3">
+      <h4 className="text-sm font-medium text-gray-700">{'\u{1F68A}'} OV-bereikbaarheid</h4>
+
+      {/* OV Score */}
+      <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
+        <div className="text-xs font-medium text-purple-700 mb-1.5">OV-score</div>
+        <OVScoreBar score={ovData.ov_score} breakdown={ovData.score_breakdown} />
+      </div>
+
+      {/* Nearest stops */}
+      <div className="space-y-1.5">
+        <div className="text-xs font-medium text-gray-500">Haltes in de buurt</div>
+        {haltesToShow.map((halte, idx) => (
+          <div key={idx} className="bg-gray-50 rounded-lg p-2.5">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-1.5">
+                <span className="text-base">{OV_TYPE_ICONS[halte.type] || '\u{1F68F}'}</span>
+                <div>
+                  <div className="text-xs font-medium text-gray-800">{halte.naam}</div>
+                  <div className="text-[10px] text-gray-400 mt-0.5">
+                    {halte.lijnen.slice(0, 5).join(', ')}
+                    {halte.lijnen.length > 5 && ` +${halte.lijnen.length - 5}`}
+                  </div>
+                </div>
+              </div>
+              <div className="text-right">
+                <span className={`text-xs px-1.5 py-0.5 rounded ${ovAfstandKleur(halte.afstand_m)}`}>
+                  {halte.afstand_m}m
+                </span>
+                {halte.frequentie_spits && (
+                  <div className="text-[10px] text-gray-400 mt-0.5">{halte.frequentie_spits}x/uur spits</div>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+        {ovData.haltes_nabij.length > 3 && (
+          <button
+            onClick={() => setShowAllHaltes(!showAllHaltes)}
+            className="text-xs text-purple-600 hover:text-purple-800"
+          >
+            {showAllHaltes ? 'Minder tonen' : `Alle ${ovData.haltes_nabij.length} haltes tonen`}
+          </button>
+        )}
+      </div>
+
+      {/* Travel times comparison: OV vs Fiets */}
+      {hasReistijden && (
+        <div className="space-y-1.5">
+          <div className="text-xs font-medium text-gray-500">Geschatte reistijd werklocaties</div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-gray-400 text-[10px]">
+                  <th className="text-left font-normal pb-1.5">Bestemming</th>
+                  <th className="text-right font-normal pb-1.5">{'\u{1F68A}'} OV</th>
+                  <th className="text-right font-normal pb-1.5">{'\u{1F6B2}'} Fiets</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ovData.reistijden_werklocaties.map((ov, idx) => {
+                  const fiets = fietsafstanden[idx]
+                  return (
+                    <tr key={idx} className="border-t border-gray-100">
+                      <td className="py-1.5 text-gray-700 pr-2">
+                        <div>{ov.dest_naam}</div>
+                        {!ov.error && (
+                          <div className="text-[10px] text-gray-400">{ov.route_beschrijving}</div>
+                        )}
+                      </td>
+                      <td className="py-1.5 text-right">
+                        {ov.error ? (
+                          <span className="text-gray-400">&mdash;</span>
+                        ) : (
+                          <span className={`px-1.5 py-0.5 rounded ${ovReistijdKleur(ov.reistijd_min)}`}>
+                            {ov.reistijd_min} min
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-1.5 text-right">
+                        {fiets && !fiets.error ? (
+                          <span className={`px-1.5 py-0.5 rounded ${fietsKleur(fiets.reistijd_min)}`}>
+                            {fiets.reistijd_min} min
+                          </span>
+                        ) : (
+                          <span className="text-gray-400">&mdash;</span>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function VoorzieningenKaart({ data }: { data: VoorzieningenResponse }) {
   const hasVoorzieningen = data.voorzieningen.length > 0
   const hasRoutes = data.fietsafstanden?.some(f => f.geometry && !f.error)
-  if (!hasVoorzieningen && !hasRoutes) return null
+  const hasOVHaltes = (data.ov_data?.haltes_nabij?.length ?? 0) > 0
+  if (!hasVoorzieningen && !hasRoutes && !hasOVHaltes) return null
 
   return (
     <div className="rounded-lg overflow-hidden border border-gray-200" style={{ height: 300 }}>
@@ -240,6 +406,29 @@ function VoorzieningenKaart({ data }: { data: VoorzieningenResponse }) {
                 <div className="font-medium">{v.naam}</div>
                 <div className="text-gray-500">{CATEGORIE_LABELS[v.categorie] || v.categorie}</div>
                 <div>{v.afstand_m}m ({v.looptijd_min} min lopen)</div>
+              </div>
+            </Popup>
+          </CircleMarker>
+        ))}
+        {/* OV halte markers */}
+        {data.ov_data?.haltes_nabij?.map((halte, idx) => (
+          <CircleMarker
+            key={`ov-${idx}`}
+            center={[halte.lat, halte.lng]}
+            radius={7}
+            pathOptions={{
+              color: OV_TYPE_COLORS[halte.type] || '#6b7280',
+              fillColor: OV_TYPE_COLORS[halte.type] || '#6b7280',
+              fillOpacity: 0.8,
+              weight: 2,
+            }}
+          >
+            <Popup>
+              <div className="text-xs">
+                <div className="font-medium">{OV_TYPE_ICONS[halte.type] || ''} {halte.naam}</div>
+                <div className="text-gray-500">{halte.type}</div>
+                <div>{halte.afstand_m}m &middot; {halte.lijnen.slice(0, 4).join(', ')}</div>
+                {halte.frequentie_spits && <div>{halte.frequentie_spits}x/uur (spits)</div>}
               </div>
             </Popup>
           </CircleMarker>
@@ -320,8 +509,13 @@ export default function VoorzieningenPanel({ postcode, huisnummer }: Voorziening
         </div>
       </div>
 
-      {/* Fietsafstand werklocaties */}
-      <FietsafstandSection fietsafstanden={data.fietsafstanden || []} />
+      {/* OV bereikbaarheid */}
+      {data.ov_data && (
+        <OVSection ovData={data.ov_data} fietsafstanden={data.fietsafstanden || []} />
+      )}
+
+      {/* Fietsafstand werklocaties (only show if no OV section, to avoid duplicate) */}
+      {!data.ov_data && <FietsafstandSection fietsafstanden={data.fietsafstanden || []} />}
 
       {/* CBS distances by category */}
       <CBSAfstandenSection afstanden={data.cbs_afstanden} />
@@ -333,7 +527,7 @@ export default function VoorzieningenPanel({ postcode, huisnummer }: Voorziening
       <VoorzieningenKaart data={data} />
 
       <p className="text-xs text-gray-400">
-        Bronnen: CBS Nabijheid voorzieningen, OpenStreetMap, OpenRouteService. Afstanden zijn hemelsbreed (CBS) of fietsroute (ORS).
+        Bronnen: CBS Nabijheid voorzieningen, OpenStreetMap, OpenRouteService, OVapi.nl. Afstanden zijn hemelsbreed (CBS), fietsroute (ORS) of geschat (OV).
       </p>
     </div>
   )
