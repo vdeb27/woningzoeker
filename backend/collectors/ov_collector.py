@@ -27,6 +27,15 @@ TRANSPORT_TYPE_MAP = {
     "FERRY": "veerboot",
 }
 
+# RandstadRail lines operate on dedicated track (light metro), higher speed than tram
+RANDSTADRAIL_LINES = {"3", "4", "34", "E"}
+
+# Patterns in stop names that indicate a train station
+STATION_NAME_PATTERNS = {"station", "centraal", "hollands spoor"}
+
+# Extended radius for searching train/metro stations (they're further but very relevant)
+STATION_SEARCH_RADIUS_M = 2500
+
 # Average speeds per transport type (km/h) for heuristic travel time
 AVERAGE_SPEEDS = {
     "trein": 60,
@@ -243,8 +252,16 @@ class OVCollector:
             logger.warning("OVapi stop details fetch failed for %s: %s", stop_area_code, exc)
             return None
 
+    def _classify_line(self, transport_type: str, line_number: str) -> str:
+        """Classify a line, promoting RandstadRail tram lines to metro."""
+        dutch_type = TRANSPORT_TYPE_MAP.get(transport_type.upper(), transport_type.lower())
+        # RandstadRail lines run on dedicated track like light metro
+        if dutch_type == "tram" and line_number in RANDSTADRAIL_LINES:
+            dutch_type = "metro"
+        return dutch_type
+
     def _extract_lines_from_stop(self, stop_data: Dict, stop_area_code: str) -> List[str]:
-        """Extract line names (e.g. 'Tram 1', 'Bus 23') from stop detail data."""
+        """Extract line names (e.g. 'Metro 3', 'Bus 23') from stop detail data."""
         lines = set()
         # stop_data structure: {stop_area_code: {tpc_code: {Passes: {...}, ...}}}
         area_data = stop_data.get(stop_area_code, {})
@@ -260,7 +277,7 @@ class OVCollector:
                 transport_type = pass_info.get("TransportType", "").upper()
                 line_number = pass_info.get("LinePublicNumber", "")
                 if transport_type and line_number:
-                    dutch_type = TRANSPORT_TYPE_MAP.get(transport_type, transport_type.lower())
+                    dutch_type = self._classify_line(transport_type, line_number)
                     lines.add(f"{dutch_type.capitalize()} {line_number}")
         return sorted(lines)
 
@@ -294,8 +311,12 @@ class OVCollector:
         # Divide by 2 hours to get per-hour frequency
         return max(1, departures // 2)
 
-    def _determine_stop_type(self, stop_info: Dict, lines: List[str]) -> str:
-        """Determine the primary transport type at a stop."""
+    def _determine_stop_type(self, stop_name: str, lines: List[str]) -> str:
+        """Determine the primary transport type at a stop.
+
+        Uses line classification first, then falls back to name-based detection
+        for stations where OVapi may not return pass data (e.g. NS trains).
+        """
         # Check from line names first
         has_trein = any("Trein" in l or "Intercity" in l or "Sprinter" in l for l in lines)
         has_metro = any("Metro" in l for l in lines)
@@ -307,20 +328,37 @@ class OVCollector:
             return "metro"
         if has_tram:
             return "tram"
+
+        # Fall back to name-based detection for stations without pass data
+        name_lower = stop_name.lower()
+        if any(p in name_lower for p in STATION_NAME_PATTERNS):
+            # Stops named "Station X" are likely train stations
+            # even if OVapi only shows bus/tram passes there
+            if not lines or all("Bus" in l for l in lines):
+                return "trein"
+
         return "bus"
 
+    def _is_station_name(self, name: str) -> bool:
+        """Check if a stop name suggests it's a train/metro station."""
+        return any(p in name.lower() for p in STATION_NAME_PATTERNS)
+
     def get_nearby_stops(self, lat: float, lng: float, radius_m: int = 1000) -> List[OVHalte]:
-        """Find all OV stops within radius of given coordinates.
+        """Find all OV stops within radius, plus stations within extended radius.
+
+        Uses a tiered search: `radius_m` for all stops, then `STATION_SEARCH_RADIUS_M`
+        for stops whose name contains 'station'/'centraal' (train/metro stations are
+        further away but very relevant for commuting).
 
         Args:
             lat, lng: Center coordinates
-            radius_m: Search radius in meters (default 1000)
+            radius_m: Search radius in meters for regular stops (default 1000)
 
         Returns:
             List of OVHalte sorted by distance
         """
-        # Check cache for this specific location query
-        cache_key = self._cache_key("nearby", f"{lat:.4f}", f"{lng:.4f}", radius_m)
+        # Include station radius in cache key for consistency
+        cache_key = self._cache_key("nearby_v2", f"{lat:.4f}", f"{lng:.4f}", radius_m, STATION_SEARCH_RADIUS_M)
         cached = self._load_from_cache(cache_key)
         if cached:
             return [OVHalte.from_dict(h) for h in cached.get("haltes", [])]
@@ -344,12 +382,14 @@ class OVCollector:
                 continue
 
             distance = _haversine(lat, lng, stop_lat, stop_lng)
-            if distance <= radius_m:
-                name = (
-                    stop_info.get("TimingPointName")
-                    or stop_info.get("Name")
-                    or stop_info.get("Description", code)
-                )
+            name = (
+                stop_info.get("TimingPointName")
+                or stop_info.get("Name")
+                or stop_info.get("Description", code)
+            )
+
+            # Include if within normal radius, OR within extended radius for stations
+            if distance <= radius_m or (distance <= STATION_SEARCH_RADIUS_M and self._is_station_name(name)):
                 nearby.append({
                     "code": code,
                     "naam": name,
@@ -362,9 +402,9 @@ class OVCollector:
         # Sort by distance
         nearby.sort(key=lambda x: x["afstand_m"])
 
-        # Fetch line details for nearby stops (limit to closest 10 to avoid too many API calls)
+        # Fetch line details for nearby stops (limit to avoid too many API calls)
         haltes = []
-        for stop in nearby[:15]:
+        for stop in nearby[:20]:
             stop_detail = self._fetch_stop_details(stop["code"])
             lines = []
             freq = None
@@ -372,7 +412,7 @@ class OVCollector:
                 lines = self._extract_lines_from_stop(stop_detail, stop["code"])
                 freq = self._count_departures_rush_hour(stop_detail, stop["code"])
 
-            stop_type = self._determine_stop_type({}, lines) if lines else "bus"
+            stop_type = self._determine_stop_type(stop["naam"], lines)
 
             haltes.append(OVHalte(
                 naam=stop["naam"],
