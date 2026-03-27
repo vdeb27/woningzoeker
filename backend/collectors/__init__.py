@@ -67,6 +67,13 @@ from collectors.cycling_collector import (
     CyclingRoute,
     create_cycling_collector,
 )
+from collectors.ov_collector import (
+    OVCollector,
+    OVHalte,
+    OVReistijd,
+    OVBereikbaarheid,
+    create_ov_collector,
+)
 from collectors.rce_collector import (
     RCECollector,
     RijksmonumentResult,
@@ -147,6 +154,12 @@ __all__ = [
     "CyclingCollector",
     "CyclingRoute",
     "create_cycling_collector",
+    # OV (OVapi.nl)
+    "OVCollector",
+    "OVHalte",
+    "OVReistijd",
+    "OVBereikbaarheid",
+    "create_ov_collector",
     # RCE Rijksmonumenten
     "RCECollector",
     "RijksmonumentResult",
