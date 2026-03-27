@@ -17,7 +17,7 @@ categories:
       - high_income_share
       - low_income_share
     color: "#3b82f6"
-    weight: 0.20
+    weight: 0.18
 
   veiligheid:
     label: "Veiligheid"
@@ -26,7 +26,7 @@ categories:
       - leefbaarometer_veiligheid
       - geluidhinder_buren
     color: "#ef4444"
-    weight: 0.15
+    weight: 0.14
 
   voorzieningen:
     label: "Voorzieningen"
@@ -42,7 +42,7 @@ categories:
       - schoolkwaliteit_po
       - scholen_vo_nabij
     color: "#22c55e"
-    weight: 0.18
+    weight: 0.17
 
   woningen:
     label: "Woningkwaliteit"
@@ -53,7 +53,7 @@ categories:
       - bouwjaar_nieuw_pct
       - zonnestroom
     color: "#f59e0b"
-    weight: 0.17
+    weight: 0.16
 
   bereikbaarheid:
     label: "Bereikbaarheid"
@@ -65,7 +65,7 @@ categories:
       - afstand_ov_halte
       - ov_frequentie_spits
     color: "#8b5cf6"
-    weight: 0.15
+    weight: 0.14
 
   leefbaarheid:
     label: "Leefbaarheid"
@@ -75,7 +75,17 @@ categories:
       - geluidhinder_weg
       - tevredenheid_woonomgeving
     color: "#06b6d4"
-    weight: 0.15
+    weight: 0.14
+
+  milieu:
+    label: "Milieu & gezondheid"
+    indicators:
+      - lucht_no2
+      - lucht_pm10
+      - lucht_pm25
+      - pfas_verontreiniging
+    color: "#10b981"
+    weight: 0.07
 
 # Scoring indicators
 # Column names match indicator keys from collectors (stored as flat columns in DataFrame)
@@ -373,3 +383,40 @@ indicators:
     label: Tevredenheid woonomgeving
     unit: percentage
     description: Percentage tevreden met woonomgeving (RIVM)
+
+  # === Milieu & gezondheid ===
+  lucht_no2:
+    column: lucht_no2_avg
+    higher_is_better: false
+    weight: 0.03
+    category: milieu
+    label: NO2 jaargemiddelde
+    unit: µg/m³
+    description: Jaargemiddelde stikstofdioxide-concentratie van dichtstbijzijnd meetstation
+
+  lucht_pm10:
+    column: lucht_pm10_avg
+    higher_is_better: false
+    weight: 0.02
+    category: milieu
+    label: PM10 jaargemiddelde
+    unit: µg/m³
+    description: Jaargemiddelde fijnstof (PM10) concentratie
+
+  lucht_pm25:
+    column: lucht_pm25_avg
+    higher_is_better: false
+    weight: 0.01
+    category: milieu
+    label: PM2.5 jaargemiddelde
+    unit: µg/m³
+    description: Jaargemiddelde fijnstof (PM2.5) concentratie
+
+  pfas_verontreiniging:
+    column: pfas_max_pfos
+    higher_is_better: false
+    weight: 0.01
+    category: milieu
+    label: PFAS verontreiniging (PFOS)
+    unit: µg/kg
+    description: Maximale PFOS-concentratie in bodemmonsters binnen zoekradius
