@@ -697,10 +697,38 @@ export interface FietsafstandItem {
   error?: string | null
 }
 
+export interface OVHalteItem {
+  naam: string
+  type: string  // "trein" | "tram" | "bus" | "metro"
+  lat: number
+  lng: number
+  afstand_m: number
+  lijnen: string[]
+  frequentie_spits?: number | null
+}
+
+export interface OVReistijdItem {
+  dest_naam: string
+  reistijd_min: number
+  overstappen: number
+  route_beschrijving: string
+  halte_naam: string
+  error?: string | null
+}
+
+export interface OVData {
+  ov_score: number
+  dichtstbijzijnde_halte?: OVHalteItem | null
+  haltes_nabij: OVHalteItem[]
+  reistijden_werklocaties: OVReistijdItem[]
+  score_breakdown: Record<string, number>
+}
+
 export interface VoorzieningenResponse {
   cbs_afstanden: Record<string, CBSAfstand[]>
   voorzieningen: VoorzieningItem[]
   fietsafstanden: FietsafstandItem[]
+  ov_data?: OVData | null
   score_voorzieningen?: number
   buurt_code?: string
   buurt_naam?: string

@@ -14,6 +14,7 @@ from collectors import (
     create_cbs_nabijheid_collector,
     create_osm_overpass_collector,
     create_cycling_collector,
+    create_ov_collector,
     geocode_address_pdok,
 )
 
@@ -25,6 +26,7 @@ router = APIRouter(prefix="/api/voorzieningen", tags=["voorzieningen"])
 _nabijheid_collector = None
 _osm_collector = None
 _cycling_collector = None
+_ov_collector = None
 _werklocaties = None
 
 
@@ -47,6 +49,13 @@ def _get_cycling_collector():
     if _cycling_collector is None:
         _cycling_collector = create_cycling_collector()
     return _cycling_collector
+
+
+def _get_ov_collector():
+    global _ov_collector
+    if _ov_collector is None:
+        _ov_collector = create_ov_collector()
+    return _ov_collector
 
 
 def _get_werklocaties() -> List[Dict]:
@@ -91,10 +100,38 @@ class FietsafstandItem(BaseModel):
     error: Optional[str] = None
 
 
+class OVHalteResponse(BaseModel):
+    naam: str
+    type: str  # "trein", "tram", "bus", "metro"
+    lat: float
+    lng: float
+    afstand_m: int
+    lijnen: List[str]
+    frequentie_spits: Optional[int] = None
+
+
+class OVReistijdResponse(BaseModel):
+    dest_naam: str
+    reistijd_min: int
+    overstappen: int
+    route_beschrijving: str
+    halte_naam: str = ""
+    error: Optional[str] = None
+
+
+class OVDataResponse(BaseModel):
+    ov_score: float
+    dichtstbijzijnde_halte: Optional[OVHalteResponse] = None
+    haltes_nabij: List[OVHalteResponse] = []
+    reistijden_werklocaties: List[OVReistijdResponse] = []
+    score_breakdown: Dict[str, float] = {}
+
+
 class VoorzieningenResponse(BaseModel):
     cbs_afstanden: Dict[str, List[CBSAfstand]]
     voorzieningen: List[VoorzieningItem]
     fietsafstanden: List[FietsafstandItem] = []
+    ov_data: Optional[OVDataResponse] = None
     score_voorzieningen: Optional[float] = None
     buurt_code: Optional[str] = None
     buurt_naam: Optional[str] = None
@@ -284,10 +321,52 @@ def _build_response(
         except Exception as exc:
             logger.warning("Cycling route calculation failed: %s", exc)
 
+    # OV bereikbaarheid data
+    ov_data: Optional[OVDataResponse] = None
+    try:
+        ov = _get_ov_collector()
+        bereikbaarheid = ov.get_bereikbaarheid(lat, lng, werklocaties)
+
+        ov_haltes = [
+            OVHalteResponse(
+                naam=h.naam,
+                type=h.type,
+                lat=h.lat,
+                lng=h.lng,
+                afstand_m=h.afstand_m,
+                lijnen=h.lijnen,
+                frequentie_spits=h.frequentie_spits,
+            )
+            for h in bereikbaarheid.haltes_nabij
+        ]
+
+        ov_reistijden = [
+            OVReistijdResponse(
+                dest_naam=r.dest_naam,
+                reistijd_min=r.reistijd_min,
+                overstappen=r.overstappen,
+                route_beschrijving=r.route_beschrijving,
+                halte_naam=r.halte_naam,
+                error=r.error,
+            )
+            for r in bereikbaarheid.reistijden
+        ]
+
+        ov_data = OVDataResponse(
+            ov_score=bereikbaarheid.ov_score,
+            dichtstbijzijnde_halte=ov_haltes[0] if ov_haltes else None,
+            haltes_nabij=ov_haltes,
+            reistijden_werklocaties=ov_reistijden,
+            score_breakdown=bereikbaarheid.score_breakdown,
+        )
+    except Exception as exc:
+        logger.warning("OV bereikbaarheid lookup failed: %s", exc)
+
     return VoorzieningenResponse(
         cbs_afstanden=cbs_afstanden,
         voorzieningen=osm_items,
         fietsafstanden=fietsafstanden,
+        ov_data=ov_data,
         score_voorzieningen=score_voorzieningen,
         buurt_code=buurt_code,
         buurt_naam=buurt_naam,
