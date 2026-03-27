@@ -61,8 +61,11 @@ categories:
       - cars_per_household
       - afstand_treinstation
       - afstand_oprit
+      - ov_score
+      - afstand_ov_halte
+      - ov_frequentie_spits
     color: "#8b5cf6"
-    weight: 0.12
+    weight: 0.15
 
   leefbaarheid:
     label: "Leefbaarheid"
@@ -72,7 +75,7 @@ categories:
       - geluidhinder_weg
       - tevredenheid_woonomgeving
     color: "#06b6d4"
-    weight: 0.18
+    weight: 0.15
 
 # Scoring indicators
 # Column names match indicator keys from collectors (stored as flat columns in DataFrame)
@@ -306,6 +309,33 @@ indicators:
     label: Afstand snelweg
     unit: km
     description: Afstand tot oprit hoofdverkeersweg
+
+  ov_score:
+    column: ov_score
+    higher_is_better: true
+    weight: 0.04
+    category: bereikbaarheid
+    label: OV-score
+    unit: score
+    description: Samengestelde score voor OV-bereikbaarheid (halte-afstand, type, frequentie, verbindingen)
+
+  afstand_ov_halte:
+    column: afstand_ov_halte
+    higher_is_better: false
+    weight: 0.02
+    category: bereikbaarheid
+    label: Afstand OV-halte
+    unit: km
+    description: Afstand tot dichtstbijzijnde OV-halte (bus, tram of trein)
+
+  ov_frequentie_spits:
+    column: ov_frequentie_spits
+    higher_is_better: true
+    weight: 0.02
+    category: bereikbaarheid
+    label: OV-frequentie spits
+    unit: per_uur
+    description: Aantal vertrekken per uur tijdens de spits bij dichtstbijzijnde halte
 
   # === Leefbaarheid ===
   leefbaarometer_score:
