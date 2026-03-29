@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -653,6 +653,8 @@ export default function WaardebepalingPage() {
     toevoeging: undefined,
   })
 
+  const huisnummerRef = useRef<HTMLInputElement>(null)
+
   const [copied, setCopied] = useState(false)
 
   const handleCopy = (waardeMidden: number) => {
@@ -712,9 +714,13 @@ export default function WaardebepalingPage() {
                 placeholder="1234 AB"
                 maxLength={7}
                 value={formData.postcode}
-                onChange={(e) =>
-                  setFormData({ ...formData, postcode: e.target.value.toUpperCase() })
-                }
+                onChange={(e) => {
+                  const val = e.target.value.toUpperCase()
+                  setFormData({ ...formData, postcode: val })
+                  if (/^\d{4}\s?[A-Z]{2}$/.test(val)) {
+                    huisnummerRef.current?.focus()
+                  }
+                }}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
               />
             </div>
@@ -723,6 +729,7 @@ export default function WaardebepalingPage() {
                 Huisnummer *
               </label>
               <input
+                ref={huisnummerRef}
                 type="number"
                 required
                 min={1}
