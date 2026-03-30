@@ -4,7 +4,8 @@ import { MapContainer, TileLayer, Marker, Popup, CircleMarker, LayersControl, La
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
-import { fetchBuurtenGeoJSON, fetchWoningenGeoJSON, fetchScholenGeoJSON, fetchPostcode6GeoJSON, formatPrijs } from '../services/api'
+import { fetchBuurtenGeoJSON, fetchWoningenGeoJSON, fetchScholenGeoJSON, fetchPostcode6GeoJSON, formatPrijs, OmgevingsAnalyseResponse } from '../services/api'
+import { CATEGORIE_KLEUREN } from './BestemmingsplanPanel'
 
 // Fix default marker icons for Vite bundler
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -192,12 +193,81 @@ function Postcode6GeoJSONLayer({
   return null
 }
 
+// Imperative bestemmingsvlakken layer
+function BestemmingsvlakkenGeoJSONLayer({
+  data,
+  parentGroup,
+}: {
+  data: GeoJSON.FeatureCollection
+  parentGroup: React.RefObject<L.FeatureGroup | null>
+}) {
+  const layerRef = useRef<L.GeoJSON | null>(null)
+
+  useEffect(() => {
+    const group = parentGroup.current
+    if (!group) return
+
+    if (layerRef.current) {
+      group.removeLayer(layerRef.current)
+      layerRef.current = null
+    }
+
+    if (!data?.features?.length) return
+
+    const layer = L.geoJSON(data, {
+      style: (feature) => {
+        const categorie = feature?.properties?.categorie || 'overig'
+        return {
+          fillColor: CATEGORIE_KLEUREN[categorie] || CATEGORIE_KLEUREN.overig || '#d1d5db',
+          fillOpacity: 0.5,
+          color: '#374151',
+          weight: 1,
+          opacity: 0.6,
+        }
+      },
+      onEachFeature: (feature, featureLayer) => {
+        const props = feature.properties || {}
+        const popup = `<strong>${props.naam || 'Onbekend'}</strong>`
+          + `<br/><em>${props.categorie || ''}</em>`
+          + (props.plan_naam ? `<br/><span style="color:#6b7280;font-size:11px">${props.plan_naam}</span>` : '')
+        featureLayer.bindPopup(popup, { autoPan: false })
+      },
+    })
+
+    group.addLayer(layer)
+    layerRef.current = layer
+
+    return () => {
+      if (layerRef.current && group) {
+        group.removeLayer(layerRef.current)
+      }
+    }
+  }, [data, parentGroup])
+
+  return null
+}
+
+// Component to fly map to a specific center
+function FlyToCenter({ center, zoom }: { center: [number, number]; zoom?: number }) {
+  const map = useMap()
+
+  useEffect(() => {
+    if (center) {
+      map.flyTo(center, zoom || 15, { duration: 1 })
+    }
+  }, [center, zoom, map])
+
+  return null
+}
+
 interface BuurtMapProps {
   gemeente?: string
   minScore?: number
   colorIndicator?: string
   selectedBuurten?: string[]
   onBuurtClick?: (code: string) => void
+  bestemmingsvlakkenGeoJSON?: OmgevingsAnalyseResponse | null
+  bestemmingCenter?: [number, number]
 }
 
 // Color interpolation for dynamic indicator coloring
@@ -233,9 +303,12 @@ export default function BuurtMap({
   colorIndicator = 'score_totaal',
   selectedBuurten = [],
   onBuurtClick,
+  bestemmingsvlakkenGeoJSON,
+  bestemmingCenter,
 }: BuurtMapProps) {
   const buurtGroupRef = useRef<L.FeatureGroup>(null)
   const pc6GroupRef = useRef<L.FeatureGroup>(null)
+  const bestemmingGroupRef = useRef<L.FeatureGroup>(null)
 
   const { data: buurtenGeoJSON, error: geoError } = useQuery({
     queryKey: ['buurten-geojson', gemeente, minScore, colorIndicator],
@@ -321,6 +394,8 @@ export default function BuurtMap({
           maxZoom={19}
         />
 
+        {bestemmingCenter && <FlyToCenter center={bestemmingCenter} zoom={16} />}
+
         <LayersControl position="topright">
           <LayersControl.Overlay name="Buurten" checked>
             <FeatureGroup ref={buurtGroupRef}>
@@ -344,6 +419,17 @@ export default function BuurtMap({
               />
             </FeatureGroup>
           </LayersControl.Overlay>
+
+          {bestemmingsvlakkenGeoJSON && bestemmingsvlakkenGeoJSON.features.length > 0 && (
+            <LayersControl.Overlay name="Bestemmingen" checked>
+              <FeatureGroup ref={bestemmingGroupRef}>
+                <BestemmingsvlakkenGeoJSONLayer
+                  data={bestemmingsvlakkenGeoJSON as unknown as GeoJSON.FeatureCollection}
+                  parentGroup={bestemmingGroupRef}
+                />
+              </FeatureGroup>
+            </LayersControl.Overlay>
+          )}
 
           <LayersControl.Overlay name="Woningen" checked>
             <LayerGroup>{woningMarkers.map((marker, idx) => {

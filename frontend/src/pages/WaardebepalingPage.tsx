@@ -11,6 +11,9 @@ import {
   formatM2Prijs,
 } from '../services/api'
 import VoorzieningenPanel from '../components/VoorzieningenPanel'
+import BestemmingsplanPanel from '../components/BestemmingsplanPanel'
+import BuurtMap from '../components/BuurtMap'
+import type { OmgevingsAnalyseResponse } from '../services/api'
 
 function BiedAdviesBadge({ advies }: { advies: string }) {
   const colors: Record<string, string> = {
@@ -656,6 +659,7 @@ export default function WaardebepalingPage() {
   const huisnummerRef = useRef<HTMLInputElement>(null)
 
   const [copied, setCopied] = useState(false)
+  const [omgevingGeoJSON, setOmgevingGeoJSON] = useState<OmgevingsAnalyseResponse | null>(null)
 
   const handleCopy = (waardeMidden: number) => {
     navigator.clipboard.writeText(String(Math.round(waardeMidden)))
@@ -802,10 +806,26 @@ export default function WaardebepalingPage() {
           <div className="lg:col-span-1 space-y-6">
             <WoningGegevensColumn result={result} />
             <VoorzieningenPanel postcode={result.postcode} huisnummer={result.huisnummer} />
+            <BestemmingsplanPanel
+              lat={result.latitude}
+              lng={result.longitude}
+              onOmgevingGeoJSON={setOmgevingGeoJSON}
+            />
           </div>
           <div className="lg:col-span-2">
             <AnalyseColumn result={result} onCopy={handleCopy} copied={copied} />
           </div>
+        </div>
+      )}
+
+      {/* Bestemmingen kaart */}
+      {result && omgevingGeoJSON && omgevingGeoJSON.features.length > 0 && result.latitude && result.longitude && (
+        <div className="mt-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-2">Bestemmingen omgeving</h3>
+          <BuurtMap
+            bestemmingsvlakkenGeoJSON={omgevingGeoJSON}
+            bestemmingCenter={[result.latitude, result.longitude]}
+          />
         </div>
       )}
 
