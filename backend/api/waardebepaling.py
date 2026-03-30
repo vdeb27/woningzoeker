@@ -283,6 +283,10 @@ class EnhancedWaardebepalingResponse(BaseModel):
     # Funda listing
     funda_listing: Optional[FundaListing] = None
 
+    # Coordinaten (voor frontend componenten)
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+
     # Saved woning reference
     woning_id: Optional[int] = None
 
@@ -1464,5 +1468,7 @@ def bereken_waarde_voor_adres(
         data_bronnen=data_bronnen,
         monument=monument_result,
         funda_listing=funda_listing_data,
+        latitude=geo["lat"] if geo else None,
+        longitude=geo["lng"] if geo else None,
         woning_id=saved_woning_id,
     )
