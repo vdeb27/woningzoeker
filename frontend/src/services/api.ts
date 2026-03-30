@@ -196,6 +196,8 @@ export interface EnhancedWaardebepalingResponse {
   monument?: MonumentResponse
   // Funda listing
   funda_listing?: FundaListing
+  // Plafondhoogte inschatting
+  plafondhoogte?: PlafondhoogteResponse
   // Data sources
   data_bronnen: string[]
 }
@@ -233,6 +235,15 @@ export interface MonumentResponse {
   beschermd_gezicht?: BeschermdGezichtInfo
   unesco?: UnescoInfo
   heeft_monumentstatus: boolean
+}
+
+// Plafondhoogte inschatting
+export interface PlafondhoogteResponse {
+  geschatte_verdiepingshoogte?: number
+  label?: string
+  methode?: string
+  betrouwbaarheid?: string
+  details?: string
 }
 
 // GeoJSON types

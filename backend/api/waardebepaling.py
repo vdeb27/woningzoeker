@@ -22,6 +22,8 @@ from collectors.bag_collector import BagClient
 from collectors.rce_collector import create_rce_collector
 from collectors.pdok_beschermde_gebieden_collector import create_pdok_beschermde_gebieden_collector
 from collectors.funda_collector import create_funda_collector, PropertyListing as FundaPropertyListing
+from collectors.driedbag_collector import create_driedbag_collector
+from services.plafondhoogte import bereken_plafondhoogte, PlafondhoogteResult
 from datetime import datetime, timedelta
 from sqlalchemy import and_
 from utils.address import parse_huisnummer
@@ -137,6 +139,15 @@ class MiljoenhuizenVerkoop(BaseModel):
     woningtype: Optional[str] = None
     geschatte_waarde_laag: Optional[int] = None
     geschatte_waarde_hoog: Optional[int] = None
+
+
+class PlafondhoogteResponse(BaseModel):
+    """Geschatte plafondhoogte indicatie."""
+    geschatte_verdiepingshoogte: Optional[float] = None
+    label: Optional[str] = None
+    methode: Optional[str] = None
+    betrouwbaarheid: Optional[str] = None
+    details: Optional[str] = None
 
 
 class FundaListing(BaseModel):
@@ -282,6 +293,9 @@ class EnhancedWaardebepalingResponse(BaseModel):
 
     # Funda listing
     funda_listing: Optional[FundaListing] = None
+
+    # Plafondhoogte inschatting
+    plafondhoogte: Optional[PlafondhoogteResponse] = None
 
     # Saved woning reference
     woning_id: Optional[int] = None
@@ -1144,6 +1158,44 @@ def bereken_waarde_voor_adres(
     energielabel = energielabel_result.energielabel if energielabel_result else None
     grondoppervlakte = woz_result.oppervlakte if woz_result else None
 
+    # Fetch 3DBAG data and calculate ceiling height estimation
+    driedbag_result = None
+    plafondhoogte_result = None
+    if bag_data and bag_data.get("pand_identificaties"):
+        try:
+            driedbag = create_driedbag_collector()
+            driedbag_result = driedbag.get_building_data(
+                str(bag_data["pand_identificaties"][0])
+            )
+        except Exception:
+            pass
+
+    plafondhoogte_data = bereken_plafondhoogte(
+        h_dak_max=driedbag_result.h_dak_max if driedbag_result else None,
+        h_dak_min=driedbag_result.h_dak_min if driedbag_result else None,
+        h_dak_50p=driedbag_result.h_dak_50p if driedbag_result else None,
+        h_maaiveld=driedbag_result.h_maaiveld if driedbag_result else None,
+        dak_type_3dbag=driedbag_result.dak_type if driedbag_result else None,
+        bouwlagen_3dbag=driedbag_result.bouwlagen if driedbag_result else None,
+        opp_dak_schuin=driedbag_result.opp_dak_schuin if driedbag_result else None,
+        opp_dak_plat=driedbag_result.opp_dak_plat if driedbag_result else None,
+        aantal_bouwlagen=bag_data.get("aantal_bouwlagen") if bag_data else None,
+        inhoud=funda_listing_data.inhoud if funda_listing_data else None,
+        woonoppervlakte=woonoppervlakte,
+        verdiepingen=funda_listing_data.verdiepingen if funda_listing_data else None,
+        dak_type_funda=funda_listing_data.dak_type if funda_listing_data else None,
+    )
+
+    plafondhoogte_response = None
+    if plafondhoogte_data.geschatte_verdiepingshoogte is not None:
+        plafondhoogte_response = PlafondhoogteResponse(
+            geschatte_verdiepingshoogte=plafondhoogte_data.geschatte_verdiepingshoogte,
+            label=plafondhoogte_data.label,
+            methode=plafondhoogte_data.methode,
+            betrouwbaarheid=plafondhoogte_data.betrouwbaarheid,
+            details=plafondhoogte_data.details,
+        )
+
     # Fetch CBS market data for dynamic overbid percentage
     cbs_market_data = None
     market_overbid_pct = None
@@ -1264,6 +1316,8 @@ def bereken_waarde_voor_adres(
         data_bronnen.append("Funda")
     if monument_result and monument_result.heeft_monumentstatus:
         data_bronnen.append("RCE Monumentenregister")
+    if driedbag_result and not driedbag_result.error:
+        data_bronnen.append("3DBAG")
 
     # --- Save/update woning in database ---
     saved_woning_id = None
@@ -1464,5 +1518,6 @@ def bereken_waarde_voor_adres(
         data_bronnen=data_bronnen,
         monument=monument_result,
         funda_listing=funda_listing_data,
+        plafondhoogte=plafondhoogte_response,
         woning_id=saved_woning_id,
     )
