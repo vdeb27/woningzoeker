@@ -423,16 +423,9 @@ function FundaListingPanel({ listing, bagWoonoppervlakte, plafondhoogte }: { lis
           {detailRow('Isolatie', listing.isolatie)}
           {detailRow('Verwarming', listing.verwarming)}
           {detailRow('Dak', listing.dak_type)}
-          {plafondhoogte?.geschatte_verdiepingshoogte && (
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-500">Geschatte plafondhoogte</span>
-              <span className="text-gray-900 font-medium">
-                ~{plafondhoogte.geschatte_verdiepingshoogte.toFixed(1)}m
-                <span className="ml-1 text-xs text-gray-400">
-                  ({plafondhoogte.label}{plafondhoogte.betrouwbaarheid ? `, ${plafondhoogte.betrouwbaarheid}` : ''})
-                </span>
-              </span>
-            </div>
+          {plafondhoogte?.geschatte_verdiepingshoogte && detailRow(
+            'Geschatte plafondhoogte',
+            `~${plafondhoogte.geschatte_verdiepingshoogte.toFixed(1)}m (${plafondhoogte.label}${plafondhoogte.betrouwbaarheid ? `, ${plafondhoogte.betrouwbaarheid}` : ''})`
           )}
         </div>
       )}
@@ -564,16 +557,13 @@ function AnalyseColumn({ result, onCopy, copied }: {
         <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
           <h3 className="text-sm font-semibold text-orange-800 mb-2">Geschatte plafondhoogte</h3>
           <div className="flex justify-between text-sm">
-            <span className="text-gray-600">Verdiepingshoogte</span>
-            <span className="text-gray-900 font-medium">
-              ~{result.plafondhoogte.geschatte_verdiepingshoogte.toFixed(1)}m
-              <span className="ml-1 text-xs text-gray-400">
-                ({result.plafondhoogte.label}{result.plafondhoogte.betrouwbaarheid ? `, ${result.plafondhoogte.betrouwbaarheid}` : ''})
-              </span>
+            <span className="text-orange-600">Verdiepingshoogte</span>
+            <span className="text-orange-800 font-medium text-right max-w-[60%]">
+              ~{result.plafondhoogte.geschatte_verdiepingshoogte.toFixed(1)}m ({result.plafondhoogte.label}{result.plafondhoogte.betrouwbaarheid ? `, ${result.plafondhoogte.betrouwbaarheid}` : ''})
             </span>
           </div>
           {result.plafondhoogte.details && (
-            <div className="text-xs text-gray-400 mt-1">{result.plafondhoogte.details}</div>
+            <div className="text-xs text-orange-400 mt-1">{result.plafondhoogte.details}</div>
           )}
         </div>
       )}
