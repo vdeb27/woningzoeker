@@ -23,6 +23,7 @@ from collectors.rce_collector import create_rce_collector
 from collectors.pdok_beschermde_gebieden_collector import create_pdok_beschermde_gebieden_collector
 from collectors.funda_collector import create_funda_collector, PropertyListing as FundaPropertyListing
 from collectors.driedbag_collector import create_driedbag_collector
+from collectors.glasvezel_collector import create_glasvezel_collector
 from services.plafondhoogte import bereken_plafondhoogte, PlafondhoogteResult
 from datetime import datetime, timedelta
 from sqlalchemy import and_
@@ -148,6 +149,19 @@ class PlafondhoogteResponse(BaseModel):
     methode: Optional[str] = None
     betrouwbaarheid: Optional[str] = None
     details: Optional[str] = None
+
+
+class GlasvezelResponse(BaseModel):
+    """Internet beschikbaarheid per adres."""
+    glasvezel_beschikbaar: Optional[bool] = None
+    glasvezel_snelheid: Optional[int] = None  # Mbit/s
+    glasvezel_provider: Optional[str] = None
+    kabel_beschikbaar: Optional[bool] = None
+    kabel_snelheid: Optional[int] = None  # Mbit/s
+    kabel_provider: Optional[str] = None
+    dsl_snelheid: Optional[int] = None  # Mbit/s
+    max_snelheid: Optional[int] = None  # Mbit/s
+    adres_gevonden: bool = False
 
 
 class FundaListing(BaseModel):
@@ -296,6 +310,9 @@ class EnhancedWaardebepalingResponse(BaseModel):
 
     # Plafondhoogte inschatting
     plafondhoogte: Optional[PlafondhoogteResponse] = None
+
+    # Glasvezel beschikbaarheid
+    glasvezel: Optional[GlasvezelResponse] = None
 
     # Saved woning reference
     woning_id: Optional[int] = None
@@ -1245,6 +1262,28 @@ def bereken_waarde_voor_adres(
     except Exception:
         pass
 
+    # Fetch glasvezel beschikbaarheid
+    glasvezel_response = None
+    try:
+        glasvezel_collector = create_glasvezel_collector()
+        glasvezel_result = glasvezel_collector.get_beschikbaarheid(
+            request.postcode, request.huisnummer
+        )
+        if not glasvezel_result.error:
+            glasvezel_response = GlasvezelResponse(
+                glasvezel_beschikbaar=glasvezel_result.glasvezel_beschikbaar,
+                glasvezel_snelheid=glasvezel_result.glasvezel_snelheid,
+                glasvezel_provider=glasvezel_result.glasvezel_provider,
+                kabel_beschikbaar=glasvezel_result.kabel_beschikbaar,
+                kabel_snelheid=glasvezel_result.kabel_snelheid,
+                kabel_provider=glasvezel_result.kabel_provider,
+                dsl_snelheid=glasvezel_result.dsl_snelheid,
+                max_snelheid=glasvezel_result.max_snelheid,
+                adres_gevonden=glasvezel_result.adres_gevonden,
+            )
+    except Exception:
+        pass
+
     # Calculate valuation
     service = ValuationService(db)
     if market_overbid_pct is not None:
@@ -1318,6 +1357,8 @@ def bereken_waarde_voor_adres(
         data_bronnen.append("RCE Monumentenregister")
     if driedbag_result and not driedbag_result.error:
         data_bronnen.append("3DBAG")
+    if glasvezel_response:
+        data_bronnen.append("Glasvezelcheck.nl")
 
     # --- Save/update woning in database ---
     saved_woning_id = None
@@ -1519,5 +1560,6 @@ def bereken_waarde_voor_adres(
         monument=monument_result,
         funda_listing=funda_listing_data,
         plafondhoogte=plafondhoogte_response,
+        glasvezel=glasvezel_response,
         woning_id=saved_woning_id,
     )
