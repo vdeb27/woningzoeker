@@ -7,6 +7,7 @@ import {
   EnhancedWaardebepalingResponse,
   MonumentResponse,
   FundaListing,
+  PlafondhoogteResponse,
   formatPrijs,
   formatM2Prijs,
 } from '../services/api'
@@ -308,7 +309,7 @@ function WoningGegevensColumn({ result }: { result: EnhancedWaardebepalingRespon
   )
 }
 
-function FundaListingPanel({ listing, bagWoonoppervlakte }: { listing: FundaListing, bagWoonoppervlakte?: number }) {
+function FundaListingPanel({ listing, bagWoonoppervlakte, plafondhoogte }: { listing: FundaListing, bagWoonoppervlakte?: number, plafondhoogte?: PlafondhoogteResponse }) {
   const detailRow = (label: string, value: string | number | boolean | undefined | null) => {
     if (value === undefined || value === null) return null
     const display = typeof value === 'boolean' ? (value ? 'Ja' : 'Nee') : String(value)
@@ -416,12 +417,16 @@ function FundaListingPanel({ listing, bagWoonoppervlakte }: { listing: FundaList
       )}
 
       {/* Extra */}
-      {(listing.isolatie || listing.verwarming || listing.dak_type) && (
+      {(listing.isolatie || listing.verwarming || listing.dak_type || plafondhoogte?.geschatte_verdiepingshoogte) && (
         <div className="border-t border-orange-200 pt-2 mt-2 space-y-1">
           <div className="text-xs text-orange-500 font-medium uppercase tracking-wide">Technisch</div>
           {detailRow('Isolatie', listing.isolatie)}
           {detailRow('Verwarming', listing.verwarming)}
           {detailRow('Dak', listing.dak_type)}
+          {plafondhoogte?.geschatte_verdiepingshoogte && detailRow(
+            'Geschatte plafondhoogte',
+            `~${plafondhoogte.geschatte_verdiepingshoogte.toFixed(1)}m (${plafondhoogte.label}${plafondhoogte.betrouwbaarheid ? `, ${plafondhoogte.betrouwbaarheid}` : ''})`
+          )}
         </div>
       )}
     </div>
@@ -544,7 +549,23 @@ function AnalyseColumn({ result, onCopy, copied }: {
 
       {/* Funda listing */}
       {result.funda_listing && (
-        <FundaListingPanel listing={result.funda_listing} bagWoonoppervlakte={result.woonoppervlakte} />
+        <FundaListingPanel listing={result.funda_listing} bagWoonoppervlakte={result.woonoppervlakte} plafondhoogte={result.plafondhoogte} />
+      )}
+
+      {/* Plafondhoogte (standalone als geen Funda listing) */}
+      {!result.funda_listing && result.plafondhoogte?.geschatte_verdiepingshoogte && (
+        <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
+          <h3 className="text-sm font-semibold text-orange-800 mb-2">Geschatte plafondhoogte</h3>
+          <div className="flex justify-between text-sm">
+            <span className="text-orange-600">Verdiepingshoogte</span>
+            <span className="text-orange-800 font-medium text-right max-w-[60%]">
+              ~{result.plafondhoogte.geschatte_verdiepingshoogte.toFixed(1)}m ({result.plafondhoogte.label}{result.plafondhoogte.betrouwbaarheid ? `, ${result.plafondhoogte.betrouwbaarheid}` : ''})
+            </span>
+          </div>
+          {result.plafondhoogte.details && (
+            <div className="text-xs text-orange-400 mt-1">{result.plafondhoogte.details}</div>
+          )}
+        </div>
       )}
 
       {/* Marktindicatoren */}

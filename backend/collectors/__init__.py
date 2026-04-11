@@ -100,6 +100,11 @@ from collectors.pfas_bodemkaart_collector import (
     BodemkaartResult,
     create_pfas_bodemkaart_collector,
 )
+from collectors.driedbag_collector import (
+    DrieDBagCollector,
+    DrieDBagResult,
+    create_driedbag_collector,
+)
 from collectors.funda_collector import (
     FundaCollector,
     PropertyListing,
@@ -197,6 +202,10 @@ __all__ = [
     "PFASBodemkaartCollector",
     "BodemkaartResult",
     "create_pfas_bodemkaart_collector",
+    # 3DBAG
+    "DrieDBagCollector",
+    "DrieDBagResult",
+    "create_driedbag_collector",
     # Funda
     "FundaCollector",
     "PropertyListing",
