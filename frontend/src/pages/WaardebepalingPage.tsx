@@ -8,6 +8,7 @@ import {
   MonumentResponse,
   FundaListing,
   PlafondhoogteResponse,
+  GlasvezelResponse,
   formatPrijs,
   formatM2Prijs,
 } from '../services/api'
@@ -309,6 +310,52 @@ function WoningGegevensColumn({ result }: { result: EnhancedWaardebepalingRespon
   )
 }
 
+function GlasvezelPanel({ glasvezel }: { glasvezel: GlasvezelResponse }) {
+  const beschikbaar = glasvezel.glasvezel_beschikbaar
+  const formatSnelheid = (mbit: number) => mbit >= 1000 ? `${(mbit / 1000).toFixed(0)} Gbit/s` : `${mbit} Mbit/s`
+
+  return (
+    <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+      <div className="text-sm text-indigo-700 font-medium mb-2">Internet beschikbaarheid</div>
+      <div className="space-y-1">
+        <div className="flex justify-between text-sm">
+          <span className="text-indigo-600">Glasvezel</span>
+          <span className={`font-medium ${beschikbaar ? 'text-green-700' : 'text-gray-500'}`}>
+            {beschikbaar ? 'Beschikbaar' : 'Niet beschikbaar'}
+          </span>
+        </div>
+        {beschikbaar && glasvezel.glasvezel_snelheid && (
+          <div className="flex justify-between text-sm">
+            <span className="text-indigo-600">Max. snelheid glasvezel</span>
+            <span className="text-indigo-800 font-medium">{formatSnelheid(glasvezel.glasvezel_snelheid)}</span>
+          </div>
+        )}
+        {beschikbaar && glasvezel.glasvezel_provider && (
+          <div className="flex justify-between text-sm">
+            <span className="text-indigo-600">Glasvezel netwerk</span>
+            <span className="text-indigo-800 font-medium capitalize">{glasvezel.glasvezel_provider}</span>
+          </div>
+        )}
+        {glasvezel.kabel_beschikbaar && glasvezel.kabel_snelheid && (
+          <div className="flex justify-between text-sm">
+            <span className="text-indigo-600">Kabel</span>
+            <span className="text-indigo-800 font-medium">
+              {formatSnelheid(glasvezel.kabel_snelheid)}
+              {glasvezel.kabel_provider && <span className="text-indigo-500 font-normal capitalize"> ({glasvezel.kabel_provider})</span>}
+            </span>
+          </div>
+        )}
+        {glasvezel.dsl_snelheid && !glasvezel.glasvezel_beschikbaar && !glasvezel.kabel_beschikbaar && (
+          <div className="flex justify-between text-sm">
+            <span className="text-indigo-600">DSL</span>
+            <span className="text-indigo-800 font-medium">{formatSnelheid(glasvezel.dsl_snelheid)}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function FundaListingPanel({ listing, bagWoonoppervlakte, plafondhoogte }: { listing: FundaListing, bagWoonoppervlakte?: number, plafondhoogte?: PlafondhoogteResponse }) {
   const detailRow = (label: string, value: string | number | boolean | undefined | null) => {
     if (value === undefined || value === null) return null
@@ -566,6 +613,11 @@ function AnalyseColumn({ result, onCopy, copied }: {
             <div className="text-xs text-orange-400 mt-1">{result.plafondhoogte.details}</div>
           )}
         </div>
+      )}
+
+      {/* Glasvezel beschikbaarheid */}
+      {result.glasvezel && (
+        <GlasvezelPanel glasvezel={result.glasvezel} />
       )}
 
       {/* Marktindicatoren */}
