@@ -105,6 +105,11 @@ from collectors.driedbag_collector import (
     DrieDBagResult,
     create_driedbag_collector,
 )
+from collectors.glasvezel_collector import (
+    GlasvezelCollector,
+    GlasvezelResult,
+    create_glasvezel_collector,
+)
 from collectors.funda_collector import (
     FundaCollector,
     PropertyListing,
@@ -206,6 +211,10 @@ __all__ = [
     "DrieDBagCollector",
     "DrieDBagResult",
     "create_driedbag_collector",
+    # Glasvezel
+    "GlasvezelCollector",
+    "GlasvezelResult",
+    "create_glasvezel_collector",
     # Funda
     "FundaCollector",
     "PropertyListing",
