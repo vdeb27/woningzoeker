@@ -772,6 +772,54 @@ WKPB_WFS_URL = "https://service.pdok.nl/kadaster/wkpb/wfs/v1_0"
 PDOK_LOCATIE_URL = "https://api.pdok.nl/bzk/locatieserver/search/v3_1/free"
 
 
+def _lookup_pand_id_pdok(postcode: str, huisnummer: int) -> Optional[str]:
+    """Lookup pand identificatie via free PDOK BAG WFS (no API key needed)."""
+    try:
+        # Step 1: Get adresseerbaarobject_id from PDOK Locatieserver
+        resp = requests.get(
+            "https://api.pdok.nl/bzk/locatieserver/search/v3_1/free",
+            params={
+                "q": f"{postcode} {huisnummer}",
+                "fq": "type:adres",
+                "fl": "adresseerbaarobject_id",
+                "rows": 1,
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        docs = resp.json().get("response", {}).get("docs", [])
+        if not docs:
+            return None
+
+        vbo_id = docs[0].get("adresseerbaarobject_id")
+        if not vbo_id:
+            return None
+
+        # Step 2: Get pandidentificatie from PDOK BAG WFS
+        resp2 = requests.get(
+            "https://service.pdok.nl/lv/bag/wfs/v2_0",
+            params={
+                "service": "WFS",
+                "version": "2.0.0",
+                "request": "GetFeature",
+                "typeName": "bag:verblijfsobject",
+                "outputFormat": "application/json",
+                "CQL_FILTER": f"identificatie='{vbo_id}'",
+                "count": 1,
+            },
+            timeout=10,
+        )
+        resp2.raise_for_status()
+        features = resp2.json().get("features", [])
+        if features:
+            pand_id = features[0].get("properties", {}).get("pandidentificatie")
+            if pand_id:
+                return str(pand_id)
+    except Exception:
+        pass
+    return None
+
+
 def _lookup_wkpb(postcode: str, huisnummer: int) -> Dict[str, Any]:
     """
     Query Kadaster WKPB (publiekrechtelijke beperkingen) for monument status.
@@ -1203,13 +1251,21 @@ def bereken_waarde_voor_adres(
 
     # Fetch 3DBAG data and calculate ceiling height estimation
     driedbag_result = None
+    driedbag = create_driedbag_collector()
     plafondhoogte_result = None
+    pand_identificatie = None
+
     if bag_data and bag_data.get("pand_identificaties"):
+        pand_identificatie = str(bag_data["pand_identificaties"][0])
+    else:
+        # Fallback: lookup pand ID via free PDOK BAG WFS
+        pand_identificatie = _lookup_pand_id_pdok(
+            request.postcode, request.huisnummer
+        )
+
+    if pand_identificatie:
         try:
-            driedbag = create_driedbag_collector()
-            driedbag_result = driedbag.get_building_data(
-                str(bag_data["pand_identificaties"][0])
-            )
+            driedbag_result = driedbag.get_building_data(pand_identificatie)
         except Exception:
             pass
 
