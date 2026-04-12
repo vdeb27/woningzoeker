@@ -164,6 +164,29 @@ class GlasvezelResponse(BaseModel):
     adres_gevonden: bool = False
 
 
+class OrientatieResponse(BaseModel):
+    """Zon en oriëntatie analyse."""
+    tuin_orientatie: Optional[str] = None
+    tuin_azimut: Optional[float] = None
+    tuin_oppervlakte_berekend: Optional[float] = None
+    zon_uren_zomer: Optional[float] = None
+    zon_uren_lente: Optional[float] = None
+    zon_uren_winter: Optional[float] = None
+    zon_label: Optional[str] = None
+    schaduw_eigen_gebouw: Optional[str] = None
+    schaduw_buren: Optional[str] = None
+    schaduw_bomen: Optional[str] = None
+    effectieve_tuin_diepte: Optional[float] = None
+    zonnepanelen_score: Optional[int] = None
+    zonnepanelen_label: Optional[str] = None
+    dak_orientatie: Optional[str] = None
+    dak_hellingshoek: Optional[float] = None
+    geschikt_dakoppervlak: Optional[float] = None
+    methode: Optional[str] = None
+    betrouwbaarheid: Optional[str] = None
+    details: Optional[str] = None
+
+
 class FundaListing(BaseModel):
     """Funda listing data for a property."""
     url: str
@@ -313,6 +336,9 @@ class EnhancedWaardebepalingResponse(BaseModel):
 
     # Glasvezel beschikbaarheid
     glasvezel: Optional[GlasvezelResponse] = None
+
+    # Zon en oriëntatie
+    orientatie: Optional[OrientatieResponse] = None
 
     # Saved woning reference
     woning_id: Optional[int] = None
@@ -1213,6 +1239,78 @@ def bereken_waarde_voor_adres(
             details=plafondhoogte_data.details,
         )
 
+    # Zon en oriëntatie analyse
+    orientatie_response = None
+    try:
+        from services.orientatie import bereken_orientatie
+        from collectors.perceelgrens_collector import create_perceelgrens_collector
+        from collectors.bgt_boom_collector import create_bgt_boom_collector
+
+        footprint_rd = driedbag_result.footprint_rd if driedbag_result else None
+
+        # Bereken centroid voor spatial queries
+        orientatie_rd_x, orientatie_rd_y = None, None
+        if footprint_rd:
+            orientatie_rd_x = sum(p[0] for p in footprint_rd) / len(footprint_rd)
+            orientatie_rd_y = sum(p[1] for p in footprint_rd) / len(footprint_rd)
+
+        perceel_polygon = None
+        buurtgebouwen = []
+        bomen = []
+
+        if orientatie_rd_x and orientatie_rd_y:
+            # Perceelgrenzen ophalen
+            try:
+                perceel_collector = create_perceelgrens_collector()
+                perceel_result = perceel_collector.get_perceel(
+                    orientatie_rd_x, orientatie_rd_y,
+                    building_footprint_rd=footprint_rd,
+                )
+                perceel_polygon = perceel_result.perceel_polygon_rd
+            except Exception:
+                pass
+
+            # Buurtgebouwen ophalen
+            try:
+                pand_id = driedbag_result.pand_identificatie if driedbag_result else None
+                buurtgebouwen = driedbag.get_surrounding_buildings(
+                    orientatie_rd_x, orientatie_rd_y,
+                    radius=75,
+                    exclude_pand_id=pand_id,
+                )
+            except Exception:
+                pass
+
+            # BGT bomen met AHN hoogtes
+            try:
+                boom_collector = create_bgt_boom_collector()
+                bomen = boom_collector.get_trees(
+                    orientatie_rd_x, orientatie_rd_y, radius=75
+                )
+            except Exception:
+                pass
+
+        orientatie_data = bereken_orientatie(
+            building_footprint_rd=footprint_rd,
+            perceel_polygon_rd=perceel_polygon,
+            gebouwhoogte=driedbag_result.gebouwhoogte if driedbag_result else None,
+            dak_azimut=driedbag_result.dak_azimut if driedbag_result else None,
+            dak_hellingshoek=driedbag_result.dak_hellingshoek if driedbag_result else None,
+            opp_dak_schuin=driedbag_result.opp_dak_schuin if driedbag_result else None,
+            opp_dak_plat=driedbag_result.opp_dak_plat if driedbag_result else None,
+            dak_type=driedbag_result.dak_type if driedbag_result else None,
+            buurtgebouwen=buurtgebouwen,
+            bomen=bomen,
+            funda_tuin_orientatie=funda_listing_data.tuin_orientatie if funda_listing_data else None,
+        )
+
+        if orientatie_data.tuin_orientatie or orientatie_data.zonnepanelen_score:
+            orientatie_response = OrientatieResponse(
+                **orientatie_data.to_dict()
+            )
+    except Exception:
+        pass
+
     # Fetch CBS market data for dynamic overbid percentage
     cbs_market_data = None
     market_overbid_pct = None
@@ -1561,5 +1659,6 @@ def bereken_waarde_voor_adres(
         funda_listing=funda_listing_data,
         plafondhoogte=plafondhoogte_response,
         glasvezel=glasvezel_response,
+        orientatie=orientatie_response,
         woning_id=saved_woning_id,
     )

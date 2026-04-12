@@ -1,21 +1,23 @@
 """
-3DBAG collector for building height and roof data.
+3DBAG collector for building height, roof data, and orientation.
 
 Fetches 3D building attributes from api.3dbag.nl, including
-roof height, ground level, roof type, and building volume.
-Used for ceiling height estimation.
+roof height, ground level, roof type, building volume,
+roof orientation (azimuth), and building footprint geometry.
+Also supports spatial queries for surrounding buildings.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import math
 import random
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -45,6 +47,10 @@ class DrieDBagResult:
     opp_dak_schuin: Optional[float] = None
     volume_lod22: Optional[float] = None
     gebouwhoogte: Optional[float] = None
+    dak_azimut: Optional[float] = None
+    dak_hellingshoek: Optional[float] = None
+    dak_delen: Optional[List[Dict[str, Any]]] = None
+    footprint_rd: Optional[List[List[float]]] = None
     fetch_date: datetime = field(default_factory=datetime.now)
     source: str = "3dbag.nl"
     error: Optional[str] = None
@@ -64,6 +70,10 @@ class DrieDBagResult:
             "opp_dak_schuin": self.opp_dak_schuin,
             "volume_lod22": self.volume_lod22,
             "gebouwhoogte": self.gebouwhoogte,
+            "dak_azimut": self.dak_azimut,
+            "dak_hellingshoek": self.dak_hellingshoek,
+            "dak_delen": self.dak_delen,
+            "footprint_rd": self.footprint_rd,
             "fetch_date": self.fetch_date.isoformat(),
             "source": self.source,
             "error": self.error,
@@ -91,6 +101,10 @@ class DrieDBagResult:
             opp_dak_schuin=data.get("opp_dak_schuin"),
             volume_lod22=data.get("volume_lod22"),
             gebouwhoogte=data.get("gebouwhoogte"),
+            dak_azimut=data.get("dak_azimut"),
+            dak_hellingshoek=data.get("dak_hellingshoek"),
+            dak_delen=data.get("dak_delen"),
+            footprint_rd=data.get("footprint_rd"),
             fetch_date=fetch_date,
             source=data.get("source", "3dbag.nl"),
             error=data.get("error"),
@@ -136,7 +150,7 @@ class DrieDBagCollector:
     def _get_headers(self) -> Dict[str, str]:
         return {
             "User-Agent": random.choice(USER_AGENTS),
-            "Accept": "application/city+json",
+            "Accept": "application/geo+json",
         }
 
     def _rate_limit(self) -> None:
@@ -269,9 +283,28 @@ class DrieDBagCollector:
             if result.h_dak_max is not None and result.h_maaiveld is not None:
                 result.gebouwhoogte = round(result.h_dak_max - result.h_maaiveld, 2)
 
+            # Extract roof orientation from child objects' semantic surfaces
+            result.dak_delen = self._extract_roof_parts(city_objects)
+            if result.dak_delen:
+                result.dak_azimut, result.dak_hellingshoek = (
+                    self._compute_weighted_roof_orientation(result.dak_delen)
+                )
+
+            # Extract footprint polygon in RD coordinates
+            metadata = data.get("metadata", {})
+            transform = metadata.get("transform", {})
+            if not transform:
+                transform = metadata.get("metadata", {}).get("transform", {})
+            vertices = feature.get("vertices", [])
+            if obj and vertices and transform:
+                result.footprint_rd = self._extract_footprint(
+                    obj, vertices, transform
+                )
+
             logger.info(
                 f"3DBAG data for {raw_id}: hoogte={result.gebouwhoogte}m, "
-                f"dak={result.dak_type}, bouwlagen={result.bouwlagen}"
+                f"dak={result.dak_type}, bouwlagen={result.bouwlagen}, "
+                f"azimut={result.dak_azimut}, footprint={'ja' if result.footprint_rd else 'nee'}"
             )
 
         except requests.RequestException as e:
@@ -282,6 +315,231 @@ class DrieDBagCollector:
             self._save_to_cache(result)
 
         return result
+
+
+    @staticmethod
+    def _extract_roof_parts(
+        city_objects: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """Extract roof part orientations from child object semantic surfaces."""
+        roof_parts = []
+        for key, val in city_objects.items():
+            # Child objects have suffix like -0, -1, -2
+            if not any(key.endswith(f"-{i}") for i in range(20)):
+                continue
+            for geo in val.get("geometry", []):
+                if geo.get("lod") != "2.2":
+                    continue
+                surfaces = geo.get("semantics", {}).get("surfaces", [])
+                for surface in surfaces:
+                    if surface.get("type") != "RoofSurface":
+                        continue
+                    azimut = surface.get("b3_azimut")
+                    hellingshoek = surface.get("b3_hellingshoek")
+                    if azimut is not None:
+                        h_max = surface.get("b3_h_dak_max")
+                        h_min = surface.get("b3_h_dak_min")
+                        roof_parts.append(
+                            {
+                                "azimut": azimut,
+                                "hellingshoek": hellingshoek,
+                                "h_dak_max": h_max,
+                                "h_dak_min": h_min,
+                            }
+                        )
+        return roof_parts
+
+    @staticmethod
+    def _compute_weighted_roof_orientation(
+        roof_parts: List[Dict[str, Any]],
+    ) -> tuple[Optional[float], Optional[float]]:
+        """Compute area-weighted average roof azimuth and slope.
+
+        Uses circular mean for azimuth to handle the 0/360 wraparound.
+        Only considers sloped surfaces (hellingshoek > 5 degrees).
+        """
+        sin_sum = 0.0
+        cos_sum = 0.0
+        slope_sum = 0.0
+        count = 0
+
+        for part in roof_parts:
+            azimut = part.get("azimut")
+            hellingshoek = part.get("hellingshoek")
+            if azimut is None:
+                continue
+            # Only use meaningfully sloped surfaces for orientation
+            if hellingshoek is not None and hellingshoek > 5.0:
+                rad = math.radians(azimut)
+                sin_sum += math.sin(rad)
+                cos_sum += math.cos(rad)
+                slope_sum += hellingshoek
+                count += 1
+
+        if count == 0:
+            # No sloped surfaces; return first available azimuth as fallback
+            for part in roof_parts:
+                if part.get("azimut") is not None:
+                    avg_slope = part.get("hellingshoek")
+                    return round(part["azimut"], 1), (
+                        round(avg_slope, 1) if avg_slope else None
+                    )
+            return None, None
+
+        avg_azimut = math.degrees(math.atan2(sin_sum, cos_sum)) % 360
+        avg_slope = slope_sum / count
+        return round(avg_azimut, 1), round(avg_slope, 1)
+
+    @staticmethod
+    def _extract_footprint(
+        parent_obj: Dict[str, Any],
+        vertices: List[List[int]],
+        transform: Dict[str, Any],
+    ) -> Optional[List[List[float]]]:
+        """Convert CityJSON LoD 0 footprint vertices to RD coordinates."""
+        scale = transform.get("scale", [1, 1, 1])
+        translate = transform.get("translate", [0, 0, 0])
+
+        # Find LoD 0 geometry (footprint)
+        for geo in parent_obj.get("geometry", []):
+            if geo.get("lod") == "0":
+                boundaries = geo.get("boundaries", [])
+                if not boundaries or not boundaries[0]:
+                    continue
+                ring_indices = boundaries[0][0]
+                coords = []
+                for idx in ring_indices:
+                    if idx < len(vertices):
+                        v = vertices[idx]
+                        x = v[0] * scale[0] + translate[0]
+                        y = v[1] * scale[1] + translate[1]
+                        coords.append([round(x, 3), round(y, 3)])
+                if coords:
+                    return coords
+        return None
+
+    def get_surrounding_buildings(
+        self,
+        rd_x: float,
+        rd_y: float,
+        radius: float = 75.0,
+        exclude_pand_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Fetch surrounding buildings within a bounding box.
+
+        Parameters
+        ----------
+        rd_x, rd_y : float
+            Center point in RD coordinates (EPSG:28992)
+        radius : float
+            Half-width of bounding box in meters (default: 75m)
+        exclude_pand_id : str, optional
+            Pand ID to exclude (the building itself)
+
+        Returns
+        -------
+        list of dict
+            Each dict has: pand_id, hoogte, footprint_rd
+        """
+        # Round bbox for cache key stability
+        bbox_key = (
+            f"{int(rd_x - radius)}_{int(rd_y - radius)}_"
+            f"{int(rd_x + radius)}_{int(rd_y + radius)}"
+        )
+
+        # Check cache
+        if self.cache_dir:
+            cache_path = self.cache_dir / f"3dbag_bbox_{bbox_key}.json"
+            if cache_path.exists():
+                try:
+                    with open(cache_path, "r", encoding="utf-8") as f:
+                        cached = json.load(f)
+                    cache_date = datetime.fromisoformat(cached.get("fetch_date", ""))
+                    if datetime.now() - cache_date < timedelta(days=30):
+                        buildings = cached.get("buildings", [])
+                        if exclude_pand_id:
+                            buildings = [
+                                b
+                                for b in buildings
+                                if b.get("pand_id") != exclude_pand_id
+                            ]
+                        return buildings
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
+        bbox = f"{rd_x - radius},{rd_y - radius},{rd_x + radius},{rd_y + radius}"
+        buildings = []
+
+        try:
+            self._rate_limit()
+            url = f"{self.BASE_URL}?bbox={bbox}&limit=100"
+            logger.info(f"Fetching surrounding buildings: bbox={bbox}")
+            response = self.session.get(
+                url,
+                headers={"User-Agent": random.choice(USER_AGENTS), "Accept": "application/json"},
+                timeout=30,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            metadata = data.get("metadata", {})
+            transform = metadata.get("transform", {})
+            if not transform:
+                transform = metadata.get("metadata", {}).get("transform", {})
+
+            for feature in data.get("features", []):
+                feat_vertices = feature.get("vertices", [])
+                city_objects = feature.get("CityObjects", {})
+
+                for key, val in city_objects.items():
+                    # Skip child objects
+                    if any(key.endswith(f"-{i}") for i in range(20)):
+                        continue
+                    attrs = val.get("attributes", {})
+                    pand_id = attrs.get("identificatie", key).replace(
+                        "NL.IMBAG.Pand.", ""
+                    )
+                    h_max = attrs.get("b3_h_dak_max")
+                    h_mv = attrs.get("b3_h_maaiveld")
+                    hoogte = round(h_max - h_mv, 2) if h_max and h_mv else None
+
+                    footprint = None
+                    if feat_vertices and transform:
+                        footprint = self._extract_footprint(
+                            val, feat_vertices, transform
+                        )
+
+                    if hoogte and hoogte > 1.0:
+                        buildings.append(
+                            {
+                                "pand_id": pand_id,
+                                "hoogte": hoogte,
+                                "footprint_rd": footprint,
+                            }
+                        )
+
+        except requests.RequestException as e:
+            logger.error(f"Error fetching surrounding buildings: {e}")
+
+        # Save to cache
+        if self.cache_dir:
+            cache_path = self.cache_dir / f"3dbag_bbox_{bbox_key}.json"
+            try:
+                with open(cache_path, "w", encoding="utf-8") as f:
+                    json.dump(
+                        {"fetch_date": datetime.now().isoformat(), "buildings": buildings},
+                        f,
+                        ensure_ascii=False,
+                    )
+            except IOError:
+                pass
+
+        if exclude_pand_id:
+            buildings = [
+                b for b in buildings if b.get("pand_id") != exclude_pand_id
+            ]
+
+        return buildings
 
 
 def create_driedbag_collector(cache_dir: Optional[Path] = None) -> DrieDBagCollector:

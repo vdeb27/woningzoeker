@@ -9,6 +9,7 @@ import {
   FundaListing,
   PlafondhoogteResponse,
   GlasvezelResponse,
+  OrientatieResponse,
   formatPrijs,
   formatM2Prijs,
 } from '../services/api'
@@ -356,6 +357,123 @@ function GlasvezelPanel({ glasvezel }: { glasvezel: GlasvezelResponse }) {
   )
 }
 
+function OrientatiePanel({ orientatie }: { orientatie: OrientatieResponse }) {
+  const scoreKleur = (score: number) => {
+    if (score >= 8) return 'text-green-700 bg-green-100'
+    if (score >= 6) return 'text-yellow-700 bg-yellow-100'
+    if (score >= 4) return 'text-orange-700 bg-orange-100'
+    return 'text-red-700 bg-red-100'
+  }
+
+  const zonLabelKleur = (label: string) => {
+    if (label === 'Veel zon') return 'text-yellow-700'
+    if (label === 'Gemiddeld') return 'text-orange-600'
+    return 'text-gray-600'
+  }
+
+  return (
+    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+      <div className="text-sm text-yellow-700 font-medium mb-3">Zon & Oriëntatie</div>
+
+      {/* Tuinoriëntatie */}
+      {orientatie.tuin_orientatie && (
+        <div className="mb-3">
+          <div className="flex justify-between text-sm">
+            <span className="text-yellow-600">Tuin</span>
+            <span className="text-yellow-800 font-medium">{orientatie.tuin_orientatie}</span>
+          </div>
+          {orientatie.tuin_oppervlakte_berekend != null && orientatie.tuin_oppervlakte_berekend > 0 && (
+            <div className="flex justify-between text-sm">
+              <span className="text-yellow-600">Tuinoppervlakte (berekend)</span>
+              <span className="text-yellow-800">{Math.round(orientatie.tuin_oppervlakte_berekend)} m²</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Zonuren */}
+      {orientatie.zon_uren_zomer != null && (
+        <div className="mb-3">
+          <div className="flex items-center justify-between text-sm mb-1">
+            <span className="text-yellow-600">Zonuren tuin</span>
+            {orientatie.zon_label && (
+              <span className={`text-xs font-medium ${zonLabelKleur(orientatie.zon_label)}`}>
+                {orientatie.zon_label}
+              </span>
+            )}
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="text-center">
+              <div className="text-xs text-yellow-500">Zomer</div>
+              <div className="text-sm font-semibold text-yellow-800">{orientatie.zon_uren_zomer}u</div>
+            </div>
+            {orientatie.zon_uren_lente != null && (
+              <div className="text-center">
+                <div className="text-xs text-yellow-500">Lente/Herfst</div>
+                <div className="text-sm font-semibold text-yellow-800">{orientatie.zon_uren_lente}u</div>
+              </div>
+            )}
+            {orientatie.zon_uren_winter != null && (
+              <div className="text-center">
+                <div className="text-xs text-yellow-500">Winter</div>
+                <div className="text-sm font-semibold text-yellow-800">{orientatie.zon_uren_winter}u</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Schaduw info */}
+      {(orientatie.schaduw_eigen_gebouw || orientatie.schaduw_buren || orientatie.schaduw_bomen) && (
+        <div className="mb-3 space-y-1">
+          {orientatie.schaduw_eigen_gebouw && (
+            <div className="text-xs text-yellow-600">{orientatie.schaduw_eigen_gebouw}</div>
+          )}
+          {orientatie.schaduw_buren && (
+            <div className="text-xs text-yellow-600">{orientatie.schaduw_buren}</div>
+          )}
+          {orientatie.schaduw_bomen && (
+            <div className="text-xs text-yellow-600">{orientatie.schaduw_bomen}</div>
+          )}
+        </div>
+      )}
+
+      {/* Zonnepanelen */}
+      {orientatie.zonnepanelen_score != null && (
+        <div className="border-t border-yellow-200 pt-2 mt-2">
+          <div className="flex items-center justify-between text-sm mb-1">
+            <span className="text-yellow-600">Zonnepanelen</span>
+            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${scoreKleur(orientatie.zonnepanelen_score)}`}>
+              {orientatie.zonnepanelen_score}/10 {orientatie.zonnepanelen_label}
+            </span>
+          </div>
+          <div className="space-y-0.5">
+            {orientatie.dak_orientatie && (
+              <div className="flex justify-between text-xs">
+                <span className="text-yellow-500">Dak</span>
+                <span className="text-yellow-700">{orientatie.dak_orientatie}{orientatie.dak_hellingshoek != null && `, ${orientatie.dak_hellingshoek}°`}</span>
+              </div>
+            )}
+            {orientatie.geschikt_dakoppervlak != null && orientatie.geschikt_dakoppervlak > 0 && (
+              <div className="flex justify-between text-xs">
+                <span className="text-yellow-500">Geschikt oppervlak</span>
+                <span className="text-yellow-700">{Math.round(orientatie.geschikt_dakoppervlak)} m²</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Disclaimer */}
+      {orientatie.methode && (
+        <div className="text-xs text-yellow-400 mt-2">
+          Indicatief ({orientatie.methode})
+        </div>
+      )}
+    </div>
+  )
+}
+
 function FundaListingPanel({ listing, bagWoonoppervlakte, plafondhoogte }: { listing: FundaListing, bagWoonoppervlakte?: number, plafondhoogte?: PlafondhoogteResponse }) {
   const detailRow = (label: string, value: string | number | boolean | undefined | null) => {
     if (value === undefined || value === null) return null
@@ -618,6 +736,11 @@ function AnalyseColumn({ result, onCopy, copied }: {
       {/* Glasvezel beschikbaarheid */}
       {result.glasvezel && (
         <GlasvezelPanel glasvezel={result.glasvezel} />
+      )}
+
+      {/* Zon en oriëntatie */}
+      {result.orientatie && (
+        <OrientatiePanel orientatie={result.orientatie} />
       )}
 
       {/* Marktindicatoren */}
