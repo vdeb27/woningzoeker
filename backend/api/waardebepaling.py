@@ -182,6 +182,8 @@ class OrientatieResponse(BaseModel):
     dak_orientatie: Optional[str] = None
     dak_hellingshoek: Optional[float] = None
     geschikt_dakoppervlak: Optional[float] = None
+    funda_tuin_orientatie: Optional[str] = None
+    funda_tuin_oppervlakte: Optional[int] = None
     methode: Optional[str] = None
     betrouwbaarheid: Optional[str] = None
     details: Optional[str] = None
@@ -772,16 +774,23 @@ WKPB_WFS_URL = "https://service.pdok.nl/kadaster/wkpb/wfs/v1_0"
 PDOK_LOCATIE_URL = "https://api.pdok.nl/bzk/locatieserver/search/v3_1/free"
 
 
-def _lookup_pand_id_pdok(postcode: str, huisnummer: int) -> Optional[str]:
-    """Lookup pand identificatie via free PDOK BAG WFS (no API key needed)."""
+def _lookup_pand_id_pdok(
+    postcode: str, huisnummer: int
+) -> tuple[Optional[str], Optional[float], Optional[float]]:
+    """Lookup pand identificatie and RD coordinates via free PDOK.
+
+    Returns (pand_id, rd_x, rd_y) where rd_x/rd_y are the address
+    coordinates from the PDOK locatieserver.
+    """
+    rd_x, rd_y = None, None
     try:
-        # Step 1: Get adresseerbaarobject_id from PDOK Locatieserver
+        # Step 1: Get adresseerbaarobject_id + centroid from PDOK Locatieserver
         resp = requests.get(
             "https://api.pdok.nl/bzk/locatieserver/search/v3_1/free",
             params={
                 "q": f"{postcode} {huisnummer}",
                 "fq": "type:adres",
-                "fl": "adresseerbaarobject_id",
+                "fl": "adresseerbaarobject_id,centroide_rd",
                 "rows": 1,
             },
             timeout=10,
@@ -789,11 +798,20 @@ def _lookup_pand_id_pdok(postcode: str, huisnummer: int) -> Optional[str]:
         resp.raise_for_status()
         docs = resp.json().get("response", {}).get("docs", [])
         if not docs:
-            return None
+            return None, None, None
+
+        # Parse RD coordinates from "POINT(x y)" format
+        centroid_str = docs[0].get("centroide_rd", "")
+        if centroid_str:
+            import re as _re
+            m = _re.match(r"POINT\(([\d.]+)\s+([\d.]+)\)", centroid_str)
+            if m:
+                rd_x = float(m.group(1))
+                rd_y = float(m.group(2))
 
         vbo_id = docs[0].get("adresseerbaarobject_id")
         if not vbo_id:
-            return None
+            return None, rd_x, rd_y
 
         # Step 2: Get pandidentificatie from PDOK BAG WFS
         resp2 = requests.get(
@@ -814,10 +832,10 @@ def _lookup_pand_id_pdok(postcode: str, huisnummer: int) -> Optional[str]:
         if features:
             pand_id = features[0].get("properties", {}).get("pandidentificatie")
             if pand_id:
-                return str(pand_id)
+                return str(pand_id), rd_x, rd_y
     except Exception:
         pass
-    return None
+    return None, rd_x, rd_y
 
 
 def _lookup_wkpb(postcode: str, huisnummer: int) -> Dict[str, Any]:
@@ -1254,18 +1272,40 @@ def bereken_waarde_voor_adres(
     driedbag = create_driedbag_collector()
     plafondhoogte_result = None
     pand_identificatie = None
+    adres_rd_x, adres_rd_y = None, None  # True address coordinates from PDOK
+
+    # Always get PDOK coordinates (authoritative location)
+    pdok_pand_id, adres_rd_x, adres_rd_y = _lookup_pand_id_pdok(
+        request.postcode, request.huisnummer
+    )
 
     if bag_data and bag_data.get("pand_identificaties"):
         pand_identificatie = str(bag_data["pand_identificaties"][0])
-    else:
-        # Fallback: lookup pand ID via free PDOK BAG WFS
-        pand_identificatie = _lookup_pand_id_pdok(
-            request.postcode, request.huisnummer
-        )
+    elif pdok_pand_id:
+        pand_identificatie = pdok_pand_id
 
     if pand_identificatie:
         try:
             driedbag_result = driedbag.get_building_data(pand_identificatie)
+        except Exception:
+            pass
+
+    # Validate: if 3DBAG footprint is far from PDOK address, use spatial lookup
+    if driedbag_result and driedbag_result.footprint_rd and adres_rd_x and adres_rd_y:
+        fp = driedbag_result.footprint_rd
+        fp_cx = sum(p[0] for p in fp) / len(fp)
+        fp_cy = sum(p[1] for p in fp) / len(fp)
+        dist = ((fp_cx - adres_rd_x) ** 2 + (fp_cy - adres_rd_y) ** 2) ** 0.5
+        if dist > 100:  # footprint > 100m from address = wrong building
+            driedbag_result = None
+
+    # Fallback: spatial lookup by RD coordinates
+    if (not driedbag_result or not driedbag_result.footprint_rd) and adres_rd_x and adres_rd_y:
+        try:
+            loc_result = driedbag.get_building_by_location(adres_rd_x, adres_rd_y)
+            if loc_result and loc_result.footprint_rd:
+                driedbag_result = loc_result
+                pand_identificatie = loc_result.pand_identificatie
         except Exception:
             pass
 
@@ -1301,20 +1341,32 @@ def bereken_waarde_voor_adres(
         from services.orientatie import bereken_orientatie
         from collectors.perceelgrens_collector import create_perceelgrens_collector
         from collectors.bgt_boom_collector import create_bgt_boom_collector
+        from collectors.bgt_wegdeel_collector import create_bgt_wegdeel_collector
 
         footprint_rd = driedbag_result.footprint_rd if driedbag_result else None
 
-        # Bereken centroid voor spatial queries
-        orientatie_rd_x, orientatie_rd_y = None, None
-        if footprint_rd:
+        # Gebruik PDOK adrescoördinaten als primaire locatie (altijd betrouwbaar),
+        # footprint centroid als fallback
+        orientatie_rd_x, orientatie_rd_y = adres_rd_x, adres_rd_y
+        if not orientatie_rd_x and footprint_rd:
             orientatie_rd_x = sum(p[0] for p in footprint_rd) / len(footprint_rd)
             orientatie_rd_y = sum(p[1] for p in footprint_rd) / len(footprint_rd)
 
         perceel_polygon = None
         buurtgebouwen = []
         bomen = []
+        road_polygons = []
 
         if orientatie_rd_x and orientatie_rd_y:
+            # BGT wegdelen ophalen (voorkant-detectie)
+            try:
+                weg_collector = create_bgt_wegdeel_collector()
+                road_polygons = weg_collector.get_roads(
+                    orientatie_rd_x, orientatie_rd_y, radius=50
+                )
+            except Exception:
+                pass
+
             # Perceelgrenzen ophalen
             try:
                 perceel_collector = create_perceelgrens_collector()
@@ -1346,7 +1398,16 @@ def bereken_waarde_voor_adres(
             except Exception:
                 pass
 
+        # Funda tuin-data voor vergelijking
+        funda_tuin_orientatie = None
+        funda_tuin_oppervlakte = None
+        if funda_listing_data:
+            funda_tuin_orientatie = funda_listing_data.tuin_orientatie
+            funda_tuin_oppervlakte = funda_listing_data.tuin_oppervlakte
+
         orientatie_data = bereken_orientatie(
+            rd_x=orientatie_rd_x or 0.0,
+            rd_y=orientatie_rd_y or 0.0,
             building_footprint_rd=footprint_rd,
             perceel_polygon_rd=perceel_polygon,
             gebouwhoogte=driedbag_result.gebouwhoogte if driedbag_result else None,
@@ -1355,9 +1416,12 @@ def bereken_waarde_voor_adres(
             opp_dak_schuin=driedbag_result.opp_dak_schuin if driedbag_result else None,
             opp_dak_plat=driedbag_result.opp_dak_plat if driedbag_result else None,
             dak_type=driedbag_result.dak_type if driedbag_result else None,
+            dak_delen=driedbag_result.dak_delen if driedbag_result else None,
             buurtgebouwen=buurtgebouwen,
             bomen=bomen,
-            funda_tuin_orientatie=funda_listing_data.tuin_orientatie if funda_listing_data else None,
+            road_polygons=road_polygons,
+            funda_tuin_orientatie=funda_tuin_orientatie,
+            funda_tuin_oppervlakte=funda_tuin_oppervlakte,
         )
 
         if orientatie_data.tuin_orientatie or orientatie_data.zonnepanelen_score:

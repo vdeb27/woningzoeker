@@ -281,6 +281,8 @@ export interface OrientatieResponse {
   dak_orientatie?: string
   dak_hellingshoek?: number
   geschikt_dakoppervlak?: number
+  funda_tuin_orientatie?: string
+  funda_tuin_oppervlakte?: number
   methode?: string
   betrouwbaarheid?: string
   details?: string

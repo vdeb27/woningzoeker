@@ -380,12 +380,39 @@ function OrientatiePanel({ orientatie }: { orientatie: OrientatieResponse }) {
         <div className="mb-3">
           <div className="flex justify-between text-sm">
             <span className="text-yellow-600">Tuin</span>
-            <span className="text-yellow-800 font-medium">{orientatie.tuin_orientatie}</span>
+            <span className="text-yellow-800 font-medium">
+              {orientatie.tuin_orientatie}
+              {orientatie.funda_tuin_orientatie && (
+                <span className="ml-2 text-xs font-normal">
+                  {orientatie.tuin_orientatie === orientatie.funda_tuin_orientatie ? (
+                    <span className="text-green-600">· Funda: {orientatie.funda_tuin_orientatie} ✓</span>
+                  ) : (
+                    <span className="text-orange-500">· Funda: {orientatie.funda_tuin_orientatie}</span>
+                  )}
+                </span>
+              )}
+            </span>
           </div>
           {orientatie.tuin_oppervlakte_berekend != null && orientatie.tuin_oppervlakte_berekend > 0 && (
             <div className="flex justify-between text-sm">
-              <span className="text-yellow-600">Tuinoppervlakte (berekend)</span>
-              <span className="text-yellow-800">{Math.round(orientatie.tuin_oppervlakte_berekend)} m²</span>
+              <span className="text-yellow-600">Tuinoppervlakte</span>
+              <span className="text-yellow-800">
+                {Math.round(orientatie.tuin_oppervlakte_berekend)} m²
+                {orientatie.funda_tuin_oppervlakte != null && (
+                  <span className="ml-1 text-xs text-yellow-500">(Funda: {orientatie.funda_tuin_oppervlakte} m²)</span>
+                )}
+              </span>
+            </div>
+          )}
+          {orientatie.betrouwbaarheid && (
+            <div className="text-xs mt-0.5">
+              <span className={
+                orientatie.betrouwbaarheid === 'hoog' ? 'text-green-600' :
+                orientatie.betrouwbaarheid === 'middel' ? 'text-yellow-600' :
+                'text-orange-500'
+              }>
+                Betrouwbaarheid: {orientatie.betrouwbaarheid}
+              </span>
             </div>
           )}
         </div>
