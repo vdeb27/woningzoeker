@@ -286,11 +286,12 @@ def bepaal_tuin_orientatie(
         elif front_methode in ("voetpad", "rijbaan", "inrit"):
             betrouwbaarheid = "middel"
 
-    # Stap 3: Tuinoppervlakte berekenen (splits perceel in voor/achter)
+    # Stap 3: Tuinoppervlakte berekenen via ray-methode
     tuin_opp = None
     if building_footprint_rd and perceel_polygon_rd and tuin_az is not None:
         tuin_opp = _bereken_tuin_oppervlakte(
-            building_footprint_rd, perceel_polygon_rd, tuin_az
+            building_footprint_rd, perceel_polygon_rd, tuin_az,
+            rd_x=rd_x, rd_y=rd_y,
         )
 
     # Fallback: Funda oriëntatie als BGT geen resultaat geeft
@@ -308,16 +309,24 @@ def _bereken_tuin_oppervlakte(
     building_footprint_rd: List[List[float]],
     perceel_polygon_rd: List[List[float]],
     tuin_azimut: float,
+    rd_x: float = 0.0,
+    rd_y: float = 0.0,
 ) -> Optional[float]:
-    """Bereken tuinoppervlakte door perceel te splitsen in voor/achter.
+    """Bereken tuinoppervlakte via proportionele verdeling.
 
-    Splitst de open ruimte (perceel - gebouw) met een lijn loodrecht
-    op de voor-achter-as door het gebouw-centroid. De helft in de
-    tuin-richting = tuinoppervlakte.
+    Splits de open ruimte (perceel_opp - building_opp) in voor/achter
+    op basis van de relatieve afstanden vanuit het perceel-centroid
+    naar de perceelrand in tuin- en frontrichting.
+
+    Dit is robuuster dan ray-rectangle of perceel.difference(building)
+    omdat het niet afhankelijk is van building-perceel overlap
+    (3DBAG en Kadaster coördinaten liggen vaak verschoven).
     """
+    MAX_TUIN_M2 = 500
+    DEFAULT_ACHTER_FRACTIE = 0.60  # Typisch NL rijtjeshuis
+
     try:
-        from shapely.geometry import LineString, MultiPolygon, Polygon
-        from shapely.ops import split
+        from shapely.geometry import LineString, Polygon
 
         building = Polygon(building_footprint_rd)
         perceel = Polygon(perceel_polygon_rd)
@@ -327,53 +336,56 @@ def _bereken_tuin_oppervlakte(
         if not perceel.is_valid:
             perceel = perceel.buffer(0)
 
-        open_ruimte = perceel.difference(building)
-        if open_ruimte.is_empty or open_ruimte.area < 1.0:
+        perceel_opp = perceel.area
+        building_opp = building.area
+
+        # Corrigeer te kleine footprints (puntlocatie i.p.v. echt gebouw)
+        if building_opp < 20:
+            building_opp = 55  # Gemiddeld NL rijtjeshuis
+
+        open_ruimte = max(0, perceel_opp - building_opp)
+        if open_ruimte < 1.0:
             return 0.0
 
-        # Splitlijn: loodrecht op de voor-achter-as door building centroid
-        bld_cx, bld_cy = building.centroid.x, building.centroid.y
+        # Bij grote percelen (>400m²): waarschijnlijk VvE/gedeeld/appartement.
+        # Cap open ruimte op basis van een geschatte individuele footprint.
+        if perceel_opp > 400:
+            eff_footprint = min(building_opp, 80)
+            max_open = eff_footprint * 2.5
+            if open_ruimte > max_open:
+                open_ruimte = max_open
 
-        # Richting loodrecht op tuin-azimut (= loodrecht op voor-achter-as)
-        perp_az = math.radians((tuin_azimut + 90) % 360)
-        line_len = 100.0  # Ruim genoeg om perceel te doorkruisen
-        x1 = bld_cx + math.sin(perp_az) * line_len
-        y1 = bld_cy + math.cos(perp_az) * line_len
-        x2 = bld_cx - math.sin(perp_az) * line_len
-        y2 = bld_cy - math.cos(perp_az) * line_len
+        # Meet voor/achter-afstanden vanuit perceel centroid
+        cx, cy = perceel.centroid.x, perceel.centroid.y
 
-        split_line = LineString([(x1, y1), (x2, y2)])
+        def _ray_dist(dir_az):
+            rad = math.radians(dir_az)
+            ray = LineString([
+                (cx, cy),
+                (cx + math.sin(rad) * 200, cy + math.cos(rad) * 200),
+            ])
+            inter = ray.intersection(perceel.boundary)
+            if inter.is_empty:
+                return None
+            if inter.geom_type == "Point":
+                return math.hypot(inter.x - cx, inter.y - cy)
+            return min(
+                math.hypot(p.x - cx, p.y - cy)
+                for p in inter.geoms
+            )
 
-        # Split de open ruimte
-        try:
-            parts = split(open_ruimte, split_line)
-        except Exception:
-            # Als split faalt, geef totale open ruimte
-            return round(open_ruimte.area, 1)
+        tuin_dist = _ray_dist(tuin_azimut)
+        front_dist = _ray_dist((tuin_azimut + 180) % 360)
 
-        if len(parts.geoms) < 2:
-            return round(open_ruimte.area, 1)
+        if (tuin_dist is not None and front_dist is not None
+                and (tuin_dist + front_dist) > 1.0):
+            achter_fractie = tuin_dist / (tuin_dist + front_dist)
+        else:
+            achter_fractie = DEFAULT_ACHTER_FRACTIE
 
-        # Bepaal welke helft de tuin-kant is
-        tuin_rad = math.radians(tuin_azimut)
-        ref_x = bld_cx + math.sin(tuin_rad) * 20
-        ref_y = bld_cy + math.cos(tuin_rad) * 20
+        tuin_opp = min(open_ruimte * achter_fractie, MAX_TUIN_M2)
 
-        # De helft waarvan het centroid het dichtst bij het tuin-referentiepunt ligt
-        best_part = None
-        best_dist = float("inf")
-        for part in parts.geoms:
-            if part.is_empty:
-                continue
-            cx, cy = part.centroid.x, part.centroid.y
-            dist = math.hypot(cx - ref_x, cy - ref_y)
-            if dist < best_dist:
-                best_dist = dist
-                best_part = part
-
-        if best_part:
-            return round(best_part.area, 1)
-        return round(open_ruimte.area, 1)
+        return round(tuin_opp, 1)
 
     except Exception as e:
         logger.warning(f"Fout bij tuinoppervlakte berekening: {e}")
