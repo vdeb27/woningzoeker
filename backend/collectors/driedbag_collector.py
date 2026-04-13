@@ -542,6 +542,134 @@ class DrieDBagCollector:
         return buildings
 
 
+    def get_building_by_location(
+        self,
+        rd_x: float,
+        rd_y: float,
+        use_cache: bool = True,
+    ) -> Optional[DrieDBagResult]:
+        """Fetch building data using a spatial query instead of pand ID.
+
+        Useful when the pand_id maps to wrong coordinates in 3DBAG
+        (e.g. due to municipal mergers).
+
+        Parameters
+        ----------
+        rd_x, rd_y : float
+            Building location in RD coordinates (EPSG:28992)
+
+        Returns
+        -------
+        DrieDBagResult or None
+        """
+        cache_key = f"3dbag_loc_{int(rd_x)}_{int(rd_y)}"
+
+        if use_cache and self.cache_dir:
+            cache_path = self.cache_dir / f"{cache_key}.json"
+            if cache_path.exists():
+                try:
+                    with open(cache_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    result = DrieDBagResult.from_dict(data)
+                    if datetime.now() - result.fetch_date < timedelta(days=self.cache_days):
+                        return result
+                except (json.JSONDecodeError, KeyError, ValueError):
+                    pass
+
+        # Small bbox around point (15m)
+        radius = 15
+        bbox = f"{rd_x - radius},{rd_y - radius},{rd_x + radius},{rd_y + radius}"
+
+        try:
+            self._rate_limit()
+            url = f"{self.BASE_URL}?bbox={bbox}&limit=5"
+            logger.info(f"Fetching 3DBAG by location: bbox={bbox}")
+            response = self.session.get(
+                url,
+                headers=self._get_headers(),
+                timeout=30,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            metadata = data.get("metadata", {})
+            transform = metadata.get("transform", {})
+            if not transform:
+                transform = metadata.get("metadata", {}).get("transform", {})
+
+            # Find the building closest to our point
+            from shapely.geometry import Point
+            target = Point(rd_x, rd_y)
+            best_result = None
+            best_dist = float("inf")
+
+            for feature in data.get("features", []):
+                feat_verts = feature.get("vertices", [])
+                city_objects = feature.get("CityObjects", {})
+
+                for key, val in city_objects.items():
+                    if any(key.endswith(f"-{i}") for i in range(20)):
+                        continue
+
+                    attrs = val.get("attributes", {})
+                    pand_id = attrs.get("identificatie", key).replace(
+                        "NL.IMBAG.Pand.", ""
+                    )
+
+                    footprint = self._extract_footprint(val, feat_verts, transform) if feat_verts and transform else None
+                    if not footprint:
+                        continue
+
+                    from shapely.geometry import Polygon as ShapelyPoly
+                    fp_poly = ShapelyPoly(footprint)
+                    dist = target.distance(fp_poly)
+
+                    if dist < best_dist:
+                        best_dist = dist
+
+                        result = DrieDBagResult(pand_identificatie=pand_id)
+                        result.h_dak_max = attrs.get("b3_h_dak_max")
+                        result.h_dak_min = attrs.get("b3_h_dak_min")
+                        result.h_dak_50p = attrs.get("b3_h_dak_50p")
+                        result.h_dak_70p = attrs.get("b3_h_dak_70p")
+                        result.h_maaiveld = attrs.get("b3_h_maaiveld")
+                        result.dak_type = attrs.get("b3_dak_type")
+                        result.bouwlagen = attrs.get("b3_bouwlagen")
+                        result.opp_grond = attrs.get("b3_opp_grond")
+                        result.opp_dak_plat = attrs.get("b3_opp_dak_plat")
+                        result.opp_dak_schuin = attrs.get("b3_opp_dak_schuin")
+                        result.volume_lod22 = attrs.get("b3_volume_lod22")
+                        result.footprint_rd = footprint
+
+                        if result.h_dak_max is not None and result.h_maaiveld is not None:
+                            result.gebouwhoogte = round(result.h_dak_max - result.h_maaiveld, 2)
+
+                        # Roof orientation from child objects
+                        result.dak_delen = self._extract_roof_parts(city_objects)
+                        if result.dak_delen:
+                            result.dak_azimut, result.dak_hellingshoek = (
+                                self._compute_weighted_roof_orientation(result.dak_delen)
+                            )
+
+                        best_result = result
+
+            if best_result:
+                # Cache the result
+                if self.cache_dir:
+                    cache_path = self.cache_dir / f"{cache_key}.json"
+                    try:
+                        with open(cache_path, "w", encoding="utf-8") as f:
+                            json.dump(best_result.to_dict(), f, ensure_ascii=False, indent=2)
+                    except IOError:
+                        pass
+                return best_result
+
+        except Exception as e:
+            logger.error(f"Error fetching 3DBAG by location: {e}")
+
+        return None
+
+
 def create_driedbag_collector(cache_dir: Optional[Path] = None) -> DrieDBagCollector:
     """
     Factory function to create a 3DBAG collector with default cache directory.
