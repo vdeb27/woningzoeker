@@ -119,6 +119,10 @@ from collectors.bgt_boom_collector import (
     BgtBoomCollector,
     create_bgt_boom_collector,
 )
+from collectors.bgt_wegdeel_collector import (
+    BgtWegdeelCollector,
+    create_bgt_wegdeel_collector,
+)
 from collectors.funda_collector import (
     FundaCollector,
     PropertyListing,
@@ -231,6 +235,9 @@ __all__ = [
     # BGT Bomen + AHN
     "BgtBoomCollector",
     "create_bgt_boom_collector",
+    # BGT Wegdelen (voorkant-detectie)
+    "BgtWegdeelCollector",
+    "create_bgt_wegdeel_collector",
     # Funda
     "FundaCollector",
     "PropertyListing",
