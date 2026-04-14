@@ -51,6 +51,7 @@ class OrientatieResult:
     funda_tuin_oppervlakte: Optional[int] = None
 
     # Meta
+    tuin_oppervlakte_bron: Optional[str] = None  # "funda" of "schatting"
     methode: Optional[str] = None
     betrouwbaarheid: Optional[str] = None
     details: Optional[str] = None
@@ -987,7 +988,6 @@ def bereken_orientatie(
     )
     result.tuin_orientatie = tuin_label
     result.tuin_azimut = tuin_az
-    result.tuin_oppervlakte_berekend = tuin_opp
 
     # Funda vergelijking
     if funda_tuin_orientatie:
@@ -995,6 +995,24 @@ def bereken_orientatie(
         result.funda_tuin_orientatie = parsed_label
     if funda_tuin_oppervlakte:
         result.funda_tuin_oppervlakte = funda_tuin_oppervlakte
+
+    # Hybride tuinoppervlakte: Funda primair, eigen schatting als fallback
+    if funda_tuin_oppervlakte and funda_tuin_oppervlakte > 0:
+        result.tuin_oppervlakte_berekend = float(funda_tuin_oppervlakte)
+        result.tuin_oppervlakte_bron = "funda"
+    elif tuin_opp is not None and tuin_opp > 0:
+        # Bij grote percelen (>400m²): schatting te onbetrouwbaar
+        from shapely.geometry import Polygon as _Polygon
+        if perceel_polygon_rd:
+            _perc = _Polygon(perceel_polygon_rd)
+            if _perc.is_valid and _perc.area > 400:
+                result.tuin_oppervlakte_berekend = None
+            else:
+                result.tuin_oppervlakte_berekend = tuin_opp
+                result.tuin_oppervlakte_bron = "schatting"
+        else:
+            result.tuin_oppervlakte_berekend = tuin_opp
+            result.tuin_oppervlakte_bron = "schatting"
 
     if road_polygons:
         methode_parts.append("BGT")
