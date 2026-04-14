@@ -283,6 +283,7 @@ export interface OrientatieResponse {
   geschikt_dakoppervlak?: number
   funda_tuin_orientatie?: string
   funda_tuin_oppervlakte?: number
+  tuin_oppervlakte_bron?: string
   methode?: string
   betrouwbaarheid?: string
   details?: string

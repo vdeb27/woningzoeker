@@ -398,8 +398,11 @@ function OrientatiePanel({ orientatie }: { orientatie: OrientatieResponse }) {
               <span className="text-yellow-600">Tuinoppervlakte</span>
               <span className="text-yellow-800">
                 {Math.round(orientatie.tuin_oppervlakte_berekend)} m²
-                {orientatie.funda_tuin_oppervlakte != null && (
-                  <span className="ml-1 text-xs text-yellow-500">(Funda: {orientatie.funda_tuin_oppervlakte} m²)</span>
+                {orientatie.tuin_oppervlakte_bron === 'schatting' && (
+                  <span className="ml-1 text-xs text-yellow-400 italic">(inschatting)</span>
+                )}
+                {orientatie.tuin_oppervlakte_bron === 'funda' && orientatie.funda_tuin_orientatie && (
+                  <span className="ml-1 text-xs text-green-500">(Funda)</span>
                 )}
               </span>
             </div>

@@ -184,6 +184,7 @@ class OrientatieResponse(BaseModel):
     geschikt_dakoppervlak: Optional[float] = None
     funda_tuin_orientatie: Optional[str] = None
     funda_tuin_oppervlakte: Optional[int] = None
+    tuin_oppervlakte_bron: Optional[str] = None
     methode: Optional[str] = None
     betrouwbaarheid: Optional[str] = None
     details: Optional[str] = None
