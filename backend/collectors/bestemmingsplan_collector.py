@@ -5,7 +5,7 @@ Haalt bestemmingsplan/omgevingsplan informatie op via de Ruimtelijke Plannen API
 van het Digitaal Stelsel Omgevingswet (DSO).
 
 Bron: https://ruimte.omgevingswet.overheid.nl/ruimtelijke-plannen/api/opvragen/v4
-Vereist: DSO_API_KEY environment variable
+Vereist: RUIMTELIJKE_PLANNEN_API_KEY environment variable
 
 Overgangsperiode (2024-2032): zowel oude bestemmingsplannen (IMRO) als nieuwe
 omgevingsplannen worden ondersteund via dezelfde API.
@@ -27,8 +27,30 @@ from typing import Any, Dict, List, Optional, Tuple
 import math
 
 import requests
+from pyproj import Transformer
 
 logger = logging.getLogger(__name__)
+
+# WGS84 (lat/lng) -> Rijksdriehoek (EPSG:28992) transformer
+_wgs84_to_rd = Transformer.from_crs("EPSG:4326", "EPSG:28992", always_xy=True)
+_rd_to_wgs84 = Transformer.from_crs("EPSG:28992", "EPSG:4326", always_xy=True)
+
+
+def _convert_geometry_rd_to_wgs84(geom: Optional[Dict]) -> Optional[Dict]:
+    """Converteer GeoJSON geometrie van RD (epsg:28992) naar WGS84 (epsg:4326)."""
+    if not geom:
+        return geom
+
+    def _convert_coords(coords):
+        if isinstance(coords[0], (int, float)):
+            lng, lat = _rd_to_wgs84.transform(coords[0], coords[1])
+            return [lng, lat]
+        return [_convert_coords(c) for c in coords]
+
+    return {
+        "type": geom["type"],
+        "coordinates": _convert_coords(geom["coordinates"]),
+    }
 
 API_BASE = "https://ruimte.omgevingswet.overheid.nl/ruimtelijke-plannen/api/opvragen/v4"
 
@@ -319,10 +341,10 @@ class BestemmingsplanCollector:
             self.session.headers.update({
                 "Accept": "application/hal+json",
                 "Content-Type": "application/json",
-                "Content-Crs": "epsg:4326",
-                "Accept-Crs": "epsg:4326",
+                "Content-Crs": "epsg:28992",
+                "Accept-Crs": "epsg:28992",
             })
-            api_key = os.environ.get("DSO_API_KEY", "")
+            api_key = os.environ.get("RUIMTELIJKE_PLANNEN_API_KEY", "")
             if api_key:
                 self.session.headers["X-Api-Key"] = api_key
 
@@ -363,9 +385,9 @@ class BestemmingsplanCollector:
 
     def _api_call(self, method: str, path: str, **kwargs) -> Optional[Dict]:
         """Voer een API-call uit met rate limiting en error handling."""
-        api_key = os.environ.get("DSO_API_KEY", "")
+        api_key = os.environ.get("RUIMTELIJKE_PLANNEN_API_KEY", "")
         if not api_key:
-            logger.warning("DSO_API_KEY niet geconfigureerd")
+            logger.warning("RUIMTELIJKE_PLANNEN_API_KEY niet geconfigureerd")
             return None
 
         self._rate_limit()
@@ -393,12 +415,13 @@ class BestemmingsplanCollector:
             return None
 
     def _geo_body(self, lat: float, lng: float) -> Dict:
-        """GeoJSON punt voor _zoek endpoints."""
+        """GeoJSON punt voor _zoek endpoints (converteert WGS84 naar RD)."""
+        x, y = _wgs84_to_rd.transform(lng, lat)
         return {
             "_geo": {
                 "intersects": {
                     "type": "Point",
-                    "coordinates": [lng, lat],  # GeoJSON: [lng, lat]
+                    "coordinates": [x, y],  # RD (epsg:28992)
                 }
             }
         }
@@ -406,32 +429,43 @@ class BestemmingsplanCollector:
     def _find_plan(self, lat: float, lng: float) -> Optional[Dict]:
         """Zoek het meest relevante geldende plan voor een locatie."""
         body = self._geo_body(lat, lng)
-        data = self._api_call("POST", "/plannen/_zoek", json=body, params={
-            "pageSize": 20,
-            "expand": "bbox",
-        })
-        if not data:
-            return None
 
-        plannen = data.get("_embedded", {}).get("plannen", [])
-        if not plannen:
-            return None
-
-        # Filter en sorteer op relevantie
+        # Doorloop meerdere pagina's om gemeentelijke plannen te vinden
         scored: List[Tuple[int, Dict]] = []
-        for plan in plannen:
-            plan_type = plan.get("planType", "").lower()
-            status = plan.get("planStatus", "").lower()
+        for page in range(1, 4):  # max 3 pagina's
+            data = self._api_call("POST", "/plannen/_zoek", json=body, params={
+                "pageSize": 50,
+                "page": page,
+            })
+            if not data:
+                break
 
-            # Skip ontwerp-plannen (die halen we apart op)
-            if "ontwerp" in status:
-                continue
+            plannen = data.get("_embedded", {}).get("plannen", [])
+            if not plannen:
+                break
 
-            priority = PLAN_TYPE_PRIORITY.get(plan_type, 1)
-            # Vastgestelde plannen krijgen bonus
-            if "vastgesteld" in status or "onherroepelijk" in status:
-                priority += 5
-            scored.append((priority, plan))
+            for plan in plannen:
+                plan_type = plan.get("type", "").lower()
+                status_info = plan.get("planstatusInfo", {})
+                status = status_info.get("planstatus", "").lower() if isinstance(status_info, dict) else ""
+
+                # Skip ontwerp-plannen (die halen we apart op)
+                if "ontwerp" in status:
+                    continue
+
+                priority = PLAN_TYPE_PRIORITY.get(plan_type, 1)
+                # Vastgestelde plannen krijgen bonus
+                if "vastgesteld" in status or "onherroepelijk" in status:
+                    priority += 5
+                # Paraplu/facet-herzieningen zijn overkoepelend, niet gebiedsgericht
+                naam = plan.get("naam", "").lower()
+                if "paraplu" in naam or "facet" in naam:
+                    priority -= 8
+                scored.append((priority, plan))
+
+            # Stop als we al een bestemmingsplan gevonden hebben
+            if any(s[0] >= 10 for s in scored):
+                break
 
         if not scored:
             return None
@@ -451,13 +485,14 @@ class BestemmingsplanCollector:
         plannen = data.get("_embedded", {}).get("plannen", [])
         ontwerp = []
         for plan in plannen:
-            status = plan.get("planStatus", "").lower()
+            status_info = plan.get("planstatusInfo", {})
+            status = status_info.get("planstatus", "").lower() if isinstance(status_info, dict) else ""
             if "ontwerp" in status:
                 ontwerp.append({
                     "naam": plan.get("naam", ""),
-                    "type": plan.get("planType", ""),
-                    "status": plan.get("planStatus", ""),
-                    "datum": plan.get("planstatusdatum", ""),
+                    "type": plan.get("type", ""),
+                    "status": status_info.get("planstatus", "") if isinstance(status_info, dict) else "",
+                    "datum": status_info.get("datum", "") if isinstance(status_info, dict) else "",
                     "id": plan.get("id", ""),
                 })
         return ontwerp
@@ -465,8 +500,7 @@ class BestemmingsplanCollector:
     def _find_bestemmingsvlakken(self, lat: float, lng: float, plan_id: str) -> List[Dict]:
         """Zoek bestemmingsvlakken voor een locatie binnen een plan."""
         body = self._geo_body(lat, lng)
-        data = self._api_call("POST", "/bestemmingsvlakken/_zoek", json=body, params={
-            "planId": plan_id,
+        data = self._api_call("POST", f"/plannen/{plan_id}/bestemmingsvlakken/_zoek", json=body, params={
             "expand": "geometrie",
             "pageSize": 10,
         })
@@ -477,8 +511,7 @@ class BestemmingsplanCollector:
     def _find_bouwvlakken(self, lat: float, lng: float, plan_id: str) -> List[Dict]:
         """Zoek bouwvlakken voor een locatie binnen een plan."""
         body = self._geo_body(lat, lng)
-        data = self._api_call("POST", "/bouwvlakken/_zoek", json=body, params={
-            "planId": plan_id,
+        data = self._api_call("POST", f"/plannen/{plan_id}/bouwvlakken/_zoek", json=body, params={
             "expand": "geometrie",
             "pageSize": 10,
         })
@@ -489,8 +522,7 @@ class BestemmingsplanCollector:
     def _find_maatvoeringen(self, lat: float, lng: float, plan_id: str) -> List[Dict]:
         """Zoek maatvoeringen (bouwhoogte, bebouwingspercentage, etc.)."""
         body = self._geo_body(lat, lng)
-        data = self._api_call("POST", "/maatvoeringen/_zoek", json=body, params={
-            "planId": plan_id,
+        data = self._api_call("POST", f"/plannen/{plan_id}/maatvoeringen/_zoek", json=body, params={
             "pageSize": 50,
         })
         if not data:
@@ -500,8 +532,7 @@ class BestemmingsplanCollector:
     def _find_functieaanduidingen(self, lat: float, lng: float, plan_id: str) -> List[Dict]:
         """Zoek functieaanduidingen voor een locatie."""
         body = self._geo_body(lat, lng)
-        data = self._api_call("POST", "/functieaanduidingen/_zoek", json=body, params={
-            "planId": plan_id,
+        data = self._api_call("POST", f"/plannen/{plan_id}/functieaanduidingen/_zoek", json=body, params={
             "pageSize": 20,
         })
         if not data:
@@ -511,8 +542,7 @@ class BestemmingsplanCollector:
     def _find_bouwaanduidingen(self, lat: float, lng: float, plan_id: str) -> List[Dict]:
         """Zoek bouwaanduidingen voor een locatie."""
         body = self._geo_body(lat, lng)
-        data = self._api_call("POST", "/bouwaanduidingen/_zoek", json=body, params={
-            "planId": plan_id,
+        data = self._api_call("POST", f"/plannen/{plan_id}/bouwaanduidingen/_zoek", json=body, params={
             "pageSize": 20,
         })
         if not data:
@@ -570,10 +600,11 @@ class BestemmingsplanCollector:
 
         for mv in raw_maatvoeringen:
             naam = mv.get("naam", "")
-            # Maatvoeringen bevatten vaak een waardeType en waarden array
-            waarden = mv.get("maatvoeringInfo", [])
+            # API geeft maatvoeringen terug met "omvang" array
+            waarden = mv.get("omvang", [])
             if not waarden:
-                # Probeer alternatieve structuur
+                waarden = mv.get("maatvoeringInfo", [])
+            if not waarden:
                 waarde = mv.get("waarde", "")
                 if waarde:
                     waarden = [{"waarde": waarde}]
@@ -607,26 +638,23 @@ class BestemmingsplanCollector:
         return parsed, extracted
 
     def _geo_body_bbox(self, lat: float, lng: float, radius_m: float = 500) -> Dict:
-        """GeoJSON polygon (bbox) voor _zoek endpoints."""
-        lat_rad = math.radians(lat)
-        delta_lat = radius_m / 111_000
-        delta_lng = radius_m / (111_000 * math.cos(lat_rad))
-
-        min_lat = lat - delta_lat
-        max_lat = lat + delta_lat
-        min_lng = lng - delta_lng
-        max_lng = lng + delta_lng
+        """GeoJSON polygon (bbox) voor _zoek endpoints (converteert WGS84 naar RD)."""
+        cx, cy = _wgs84_to_rd.transform(lng, lat)
+        min_x = cx - radius_m
+        max_x = cx + radius_m
+        min_y = cy - radius_m
+        max_y = cy + radius_m
 
         return {
             "_geo": {
                 "intersects": {
                     "type": "Polygon",
                     "coordinates": [[
-                        [min_lng, min_lat],
-                        [max_lng, min_lat],
-                        [max_lng, max_lat],
-                        [min_lng, max_lat],
-                        [min_lng, min_lat],  # sluit ring
+                        [min_x, min_y],
+                        [max_x, min_y],
+                        [max_x, max_y],
+                        [min_x, max_y],
+                        [min_x, min_y],  # sluit ring
                     ]]
                 }
             }
@@ -661,14 +689,38 @@ class BestemmingsplanCollector:
     def find_bestemmingsvlakken_area(
         self, lat: float, lng: float, radius_m: float = 500
     ) -> List[Dict]:
-        """Zoek alle bestemmingsvlakken in een gebied (bbox)."""
-        body = self._geo_body_bbox(lat, lng, radius_m)
-        return self._paginated_api_call(
-            "POST", "/bestemmingsvlakken/_zoek", "bestemmingsvlakken",
-            max_pages=3,
-            json=body,
-            params={"expand": "geometrie", "pageSize": 100},
-        )
+        """Zoek alle bestemmingsvlakken in een gebied (bbox) via plannen."""
+        body_bbox = self._geo_body_bbox(lat, lng, radius_m)
+
+        # Stap 1: vind plannen in het gebied
+        data = self._api_call("POST", "/plannen/_zoek", json=body_bbox, params={
+            "pageSize": 50,
+        })
+        if not data:
+            return []
+
+        plannen = data.get("_embedded", {}).get("plannen", [])
+        # Filter op relevante plantypes
+        plan_ids = []
+        for plan in plannen:
+            pt = plan.get("type", "").lower()
+            if pt in PLAN_TYPE_PRIORITY and "paraplu" not in plan.get("naam", "").lower():
+                plan_ids.append(plan.get("id", ""))
+
+        # Stap 2: haal bestemmingsvlakken per plan
+        all_vlakken: List[Dict] = []
+        for plan_id in plan_ids[:5]:  # max 5 plannen
+            vlakken = self._paginated_api_call(
+                "POST", f"/plannen/{plan_id}/bestemmingsvlakken/_zoek", "bestemmingsvlakken",
+                max_pages=2,
+                json=body_bbox,
+                params={"expand": "geometrie", "pageSize": 100},
+            )
+            all_vlakken.extend(vlakken)
+            if len(all_vlakken) >= 300:
+                break
+
+        return all_vlakken
 
     def _find_ontwerp_plannen_area(
         self, lat: float, lng: float, radius_m: float = 500
@@ -684,13 +736,14 @@ class BestemmingsplanCollector:
         plannen = data.get("_embedded", {}).get("plannen", [])
         ontwerp = []
         for plan in plannen:
-            status = plan.get("planStatus", "").lower()
+            status_info = plan.get("planstatusInfo", {})
+            status = status_info.get("planstatus", "").lower() if isinstance(status_info, dict) else ""
             if "ontwerp" in status:
                 ontwerp.append({
                     "naam": plan.get("naam", ""),
-                    "type": plan.get("planType", ""),
-                    "status": plan.get("planStatus", ""),
-                    "datum": plan.get("planstatusdatum", ""),
+                    "type": plan.get("type", ""),
+                    "status": status_info.get("planstatus", "") if isinstance(status_info, dict) else "",
+                    "datum": status_info.get("datum", "") if isinstance(status_info, dict) else "",
                     "id": plan.get("id", ""),
                 })
         return ontwerp
@@ -700,13 +753,8 @@ class BestemmingsplanCollector:
     ) -> List[BurenBouwinfo]:
         """Zoek bouwmogelijkheden van naburige bestemmingsvlakken (50m radius)."""
         # Zoek vlakken in directe omgeving
-        body = self._geo_body_bbox(lat, lng, radius_m=50)
-        vlakken = self._paginated_api_call(
-            "POST", "/bestemmingsvlakken/_zoek", "bestemmingsvlakken",
-            max_pages=1,
-            json=body,
-            params={"expand": "geometrie", "pageSize": 20},
-        )
+        # Zoek vlakken via plannen in directe omgeving
+        vlakken = self.find_bestemmingsvlakken_area(lat, lng, radius_m=50)
 
         # Filter op andere bestemmingen dan de eigen
         eigen_lower = eigen_bestemming.lower()
@@ -733,10 +781,10 @@ class BestemmingsplanCollector:
                 # Zoek maatvoeringen in de buurt binnen hetzelfde plan
                 mv_body = self._geo_body_bbox(lat, lng, radius_m=50)
                 mv_raw = self._paginated_api_call(
-                    "POST", "/maatvoeringen/_zoek", "maatvoeringen",
+                    "POST", f"/plannen/{plan_id}/maatvoeringen/_zoek", "maatvoeringen",
                     max_pages=1,
                     json=mv_body,
-                    params={"planId": plan_id, "pageSize": 20},
+                    params={"pageSize": 20},
                 )
                 _, extracted = self._parse_maatvoeringen(mv_raw)
 
@@ -749,7 +797,7 @@ class BestemmingsplanCollector:
                     if "max_bebouwingspercentage" in extracted
                     else None
                 ),
-                geometrie=vlak.get("geometrie"),
+                geometrie=_convert_geometry_rd_to_wgs84(vlak.get("geometrie")),
             ))
 
             if len(buren) >= 3:
@@ -783,10 +831,10 @@ class BestemmingsplanCollector:
                 pass
 
         # Check API key
-        if not os.environ.get("DSO_API_KEY"):
+        if not os.environ.get("RUIMTELIJKE_PLANNEN_API_KEY"):
             return OmgevingsAnalyse(
                 center_lat=lat, center_lng=lng, radius_m=radius_m,
-                error="DSO_API_KEY niet geconfigureerd",
+                error="RUIMTELIJKE_PLANNEN_API_KEY niet geconfigureerd",
             )
 
         logger.info("Omgevingsanalyse ophalen voor %.4f,%.4f (radius %dm)", lat, lng, radius_m)
@@ -804,7 +852,7 @@ class BestemmingsplanCollector:
             bestemmingen.append(OmgevingsBestemming(
                 naam=naam,
                 categorie=_categorize_bestemming(naam),
-                geometrie=vlak.get("geometrie"),
+                geometrie=_convert_geometry_rd_to_wgs84(vlak.get("geometrie")),
                 plan_naam=plan_naam,
                 plan_id=plan_id,
             ))
@@ -884,14 +932,14 @@ class BestemmingsplanCollector:
             return BestemmingsplanInfo.from_dict(cached)
 
         # Check API key
-        if not os.environ.get("DSO_API_KEY"):
+        if not os.environ.get("RUIMTELIJKE_PLANNEN_API_KEY"):
             return BestemmingsplanInfo(
                 plan_naam="",
                 plan_id="",
                 plan_type="",
                 plan_status="",
                 link_plan=self._build_plan_link(lat, lng),
-                error="DSO_API_KEY niet geconfigureerd",
+                error="RUIMTELIJKE_PLANNEN_API_KEY niet geconfigureerd",
             )
 
         logger.info("Bestemmingsplan ophalen voor %.5f,%.5f", lat, lng)
@@ -910,16 +958,19 @@ class BestemmingsplanCollector:
 
         plan_id = plan.get("id", "")
         plan_naam = plan.get("naam", "Onbekend plan")
-        plan_type = plan.get("planType", "")
-        plan_status = plan.get("planStatus", "")
-        datum = plan.get("planstatusdatum", "")
+        plan_type = plan.get("type", "")
+        status_info = plan.get("planstatusInfo", {})
+        plan_status = status_info.get("planstatus", "") if isinstance(status_info, dict) else ""
+        datum = status_info.get("datum", "") if isinstance(status_info, dict) else ""
 
         # 2. Bestemming ophalen
         bestemming = "Onbekend"
         bestemming_specifiek = None
         bv_list = self._find_bestemmingsvlakken(lat, lng, plan_id)
         if bv_list:
-            bv = bv_list[0]  # Meest specifieke
+            # Voorkeur: enkelbestemming > dubbelbestemming
+            enkel = [v for v in bv_list if v.get("type", "").lower() == "enkelbestemming"]
+            bv = enkel[0] if enkel else bv_list[0]
             bestemming = bv.get("naam", bv.get("type", "Onbekend"))
             bestemming_specifiek = bv.get("specificatie")
 
@@ -929,7 +980,7 @@ class BestemmingsplanCollector:
         if bv_raw:
             bv_first = bv_raw[0]
             bouwvlak = Bouwvlak(
-                geometrie=bv_first.get("geometrie"),
+                geometrie=_convert_geometry_rd_to_wgs84(bv_first.get("geometrie")),
             )
 
         # 4. Maatvoeringen
