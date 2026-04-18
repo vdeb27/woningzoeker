@@ -127,6 +127,7 @@ class BagClient:
             "pand_identificaties": None,
             "pand_bouwjaar": None,
             "pand_status": None,
+            "aantal_bouwlagen": None,
         }
 
         bag_info = self.get_nummeraanduiding(postcode, huisnummer, huisletter, toevoeging)
@@ -165,6 +166,7 @@ class BagClient:
                     pand = pand_data.get("pand", {})
                     result["pand_bouwjaar"] = pand.get("oorspronkelijkBouwjaar")
                     result["pand_status"] = pand.get("status")
+                    result["aantal_bouwlagen"] = pand.get("aantalBouwlagen")
             except Exception:
                 pass  # Keep partial results
 

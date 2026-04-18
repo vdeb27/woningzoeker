@@ -199,6 +199,10 @@ export interface EnhancedWaardebepalingResponse {
   // Coordinaten
   latitude?: number | null
   longitude?: number | null
+  // Plafondhoogte inschatting
+  plafondhoogte?: PlafondhoogteResponse
+  // Glasvezel beschikbaarheid
+  glasvezel?: GlasvezelResponse
   // Data sources
   data_bronnen: string[]
 }
@@ -236,6 +240,28 @@ export interface MonumentResponse {
   beschermd_gezicht?: BeschermdGezichtInfo
   unesco?: UnescoInfo
   heeft_monumentstatus: boolean
+}
+
+// Plafondhoogte inschatting
+export interface PlafondhoogteResponse {
+  geschatte_verdiepingshoogte?: number
+  label?: string
+  methode?: string
+  betrouwbaarheid?: string
+  details?: string
+}
+
+// Glasvezel beschikbaarheid
+export interface GlasvezelResponse {
+  glasvezel_beschikbaar?: boolean
+  glasvezel_snelheid?: number  // Mbit/s
+  glasvezel_provider?: string
+  kabel_beschikbaar?: boolean
+  kabel_snelheid?: number  // Mbit/s
+  kabel_provider?: string
+  dsl_snelheid?: number  // Mbit/s
+  max_snelheid?: number  // Mbit/s
+  adres_gevonden: boolean
 }
 
 // GeoJSON types

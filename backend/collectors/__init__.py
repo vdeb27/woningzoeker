@@ -109,6 +109,16 @@ from collectors.bestemmingsplan_collector import (
     BurenBouwinfo,
     create_bestemmingsplan_collector,
 )
+from collectors.driedbag_collector import (
+    DrieDBagCollector,
+    DrieDBagResult,
+    create_driedbag_collector,
+)
+from collectors.glasvezel_collector import (
+    GlasvezelCollector,
+    GlasvezelResult,
+    create_glasvezel_collector,
+)
 from collectors.funda_collector import (
     FundaCollector,
     PropertyListing,
@@ -214,6 +224,14 @@ __all__ = [
     "OmgevingsBestemming",
     "BurenBouwinfo",
     "create_bestemmingsplan_collector",
+    # 3DBAG
+    "DrieDBagCollector",
+    "DrieDBagResult",
+    "create_driedbag_collector",
+    # Glasvezel
+    "GlasvezelCollector",
+    "GlasvezelResult",
+    "create_glasvezel_collector",
     # Funda
     "FundaCollector",
     "PropertyListing",
