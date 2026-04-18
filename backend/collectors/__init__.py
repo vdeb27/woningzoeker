@@ -100,6 +100,15 @@ from collectors.pfas_bodemkaart_collector import (
     BodemkaartResult,
     create_pfas_bodemkaart_collector,
 )
+from collectors.bestemmingsplan_collector import (
+    BestemmingsplanCollector,
+    BestemmingsplanInfo,
+    Maatvoering,
+    OmgevingsAnalyse,
+    OmgevingsBestemming,
+    BurenBouwinfo,
+    create_bestemmingsplan_collector,
+)
 from collectors.driedbag_collector import (
     DrieDBagCollector,
     DrieDBagResult,
@@ -207,6 +216,14 @@ __all__ = [
     "PFASBodemkaartCollector",
     "BodemkaartResult",
     "create_pfas_bodemkaart_collector",
+    # Bestemmingsplan (DSO)
+    "BestemmingsplanCollector",
+    "BestemmingsplanInfo",
+    "Maatvoering",
+    "OmgevingsAnalyse",
+    "OmgevingsBestemming",
+    "BurenBouwinfo",
+    "create_bestemmingsplan_collector",
     # 3DBAG
     "DrieDBagCollector",
     "DrieDBagResult",
