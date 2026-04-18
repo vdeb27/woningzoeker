@@ -196,6 +196,9 @@ export interface EnhancedWaardebepalingResponse {
   monument?: MonumentResponse
   // Funda listing
   funda_listing?: FundaListing
+  // Coordinaten
+  latitude?: number | null
+  longitude?: number | null
   // Plafondhoogte inschatting
   plafondhoogte?: PlafondhoogteResponse
   // Glasvezel beschikbaarheid
@@ -811,6 +814,110 @@ export async function fetchMarktOverzicht(gemeente?: string) {
   const response = await fetch(`${API_BASE}/markt/overzicht${params}`)
   if (!response.ok) {
     throw new Error('Marktoverzicht ophalen mislukt')
+  }
+  return response.json()
+}
+
+// Bestemmingsplan
+export interface MaatvoeringItem {
+  naam: string
+  waarde: string
+  eenheid?: string | null
+  waarde_type?: string | null
+}
+
+export interface BouwvlakItem {
+  geometrie?: Record<string, unknown> | null
+  maatvoeringen: MaatvoeringItem[]
+}
+
+export interface OntwerpPlanItem {
+  naam: string
+  type: string
+  status: string
+  datum: string
+  id: string
+}
+
+export interface BestemmingsplanResponse {
+  plan_naam: string
+  plan_type: string
+  plan_status: string
+  datum_vaststelling?: string | null
+  bestemming: string
+  bestemming_specifiek?: string | null
+  max_bouwhoogte?: number | null
+  max_goothoogte?: number | null
+  max_bebouwingspercentage?: number | null
+  max_inhoud?: number | null
+  bouwvlak?: BouwvlakItem | null
+  functieaanduidingen: string[]
+  bouwaanduidingen: string[]
+  maatvoeringen: MaatvoeringItem[]
+  regels_samenvatting?: string | null
+  regels_url?: string | null
+  ontwerp_plannen: OntwerpPlanItem[]
+  link_plan: string
+  uitbreidings_indicator?: string | null
+  uitbreidings_toelichting?: string | null
+  error?: string | null
+}
+
+export async function fetchBestemmingsplan(params: {
+  lat: number
+  lng: number
+}): Promise<BestemmingsplanResponse> {
+  const response = await fetch(
+    `${API_BASE}/bestemmingsplan?lat=${params.lat}&lng=${params.lng}`
+  )
+  if (!response.ok) {
+    throw new Error('Bestemmingsplan ophalen mislukt')
+  }
+  return response.json()
+}
+
+// Omgevingsanalyse
+export interface BurenBouwinfoItem {
+  bestemming: string
+  max_bouwhoogte?: number | null
+  max_goothoogte?: number | null
+  max_bebouwingspercentage?: number | null
+}
+
+export interface OmgevingsAnalyseResponse {
+  type: 'FeatureCollection'
+  features: Array<{
+    type: 'Feature'
+    geometry: Record<string, unknown> | null
+    properties: {
+      naam: string
+      categorie: string
+      plan_naam?: string
+    }
+  }>
+  statistieken: Record<string, number>
+  statistieken_pct: Record<string, number>
+  ontwerp_plannen: OntwerpPlanItem[]
+  buren_bouwinfo: BurenBouwinfoItem[]
+  center: [number, number]
+  radius_m: number
+  error?: string | null
+}
+
+export async function fetchOmgevingsAnalyse(params: {
+  lat: number
+  lng: number
+  radius_m?: number
+}): Promise<OmgevingsAnalyseResponse> {
+  const searchParams = new URLSearchParams({
+    lat: String(params.lat),
+    lng: String(params.lng),
+  })
+  if (params.radius_m) searchParams.append('radius_m', String(params.radius_m))
+
+  const response = await fetch(`${API_BASE}/bestemmingsplan/omgeving?${searchParams}`)
+  if (!response.ok) {
+    throw new Error('Omgevingsanalyse ophalen mislukt')
   }
   return response.json()
 }
