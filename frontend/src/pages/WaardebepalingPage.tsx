@@ -7,6 +7,8 @@ import {
   EnhancedWaardebepalingResponse,
   MonumentResponse,
   FundaListing,
+  PlafondhoogteResponse,
+  GlasvezelResponse,
   formatPrijs,
   formatM2Prijs,
 } from '../services/api'
@@ -311,7 +313,53 @@ function WoningGegevensColumn({ result }: { result: EnhancedWaardebepalingRespon
   )
 }
 
-function FundaListingPanel({ listing, bagWoonoppervlakte }: { listing: FundaListing, bagWoonoppervlakte?: number }) {
+function GlasvezelPanel({ glasvezel }: { glasvezel: GlasvezelResponse }) {
+  const beschikbaar = glasvezel.glasvezel_beschikbaar
+  const formatSnelheid = (mbit: number) => mbit >= 1000 ? `${(mbit / 1000).toFixed(0)} Gbit/s` : `${mbit} Mbit/s`
+
+  return (
+    <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+      <div className="text-sm text-indigo-700 font-medium mb-2">Internet beschikbaarheid</div>
+      <div className="space-y-1">
+        <div className="flex justify-between text-sm">
+          <span className="text-indigo-600">Glasvezel</span>
+          <span className={`font-medium ${beschikbaar ? 'text-green-700' : 'text-gray-500'}`}>
+            {beschikbaar ? 'Beschikbaar' : 'Niet beschikbaar'}
+          </span>
+        </div>
+        {beschikbaar && glasvezel.glasvezel_snelheid && (
+          <div className="flex justify-between text-sm">
+            <span className="text-indigo-600">Max. snelheid glasvezel</span>
+            <span className="text-indigo-800 font-medium">{formatSnelheid(glasvezel.glasvezel_snelheid)}</span>
+          </div>
+        )}
+        {beschikbaar && glasvezel.glasvezel_provider && (
+          <div className="flex justify-between text-sm">
+            <span className="text-indigo-600">Glasvezel netwerk</span>
+            <span className="text-indigo-800 font-medium capitalize">{glasvezel.glasvezel_provider}</span>
+          </div>
+        )}
+        {glasvezel.kabel_beschikbaar && glasvezel.kabel_snelheid && (
+          <div className="flex justify-between text-sm">
+            <span className="text-indigo-600">Kabel</span>
+            <span className="text-indigo-800 font-medium">
+              {formatSnelheid(glasvezel.kabel_snelheid)}
+              {glasvezel.kabel_provider && <span className="text-indigo-500 font-normal capitalize"> ({glasvezel.kabel_provider})</span>}
+            </span>
+          </div>
+        )}
+        {glasvezel.dsl_snelheid && !glasvezel.glasvezel_beschikbaar && !glasvezel.kabel_beschikbaar && (
+          <div className="flex justify-between text-sm">
+            <span className="text-indigo-600">DSL</span>
+            <span className="text-indigo-800 font-medium">{formatSnelheid(glasvezel.dsl_snelheid)}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function FundaListingPanel({ listing, bagWoonoppervlakte, plafondhoogte }: { listing: FundaListing, bagWoonoppervlakte?: number, plafondhoogte?: PlafondhoogteResponse }) {
   const detailRow = (label: string, value: string | number | boolean | undefined | null) => {
     if (value === undefined || value === null) return null
     const display = typeof value === 'boolean' ? (value ? 'Ja' : 'Nee') : String(value)
@@ -419,12 +467,16 @@ function FundaListingPanel({ listing, bagWoonoppervlakte }: { listing: FundaList
       )}
 
       {/* Extra */}
-      {(listing.isolatie || listing.verwarming || listing.dak_type) && (
+      {(listing.isolatie || listing.verwarming || listing.dak_type || plafondhoogte?.geschatte_verdiepingshoogte) && (
         <div className="border-t border-orange-200 pt-2 mt-2 space-y-1">
           <div className="text-xs text-orange-500 font-medium uppercase tracking-wide">Technisch</div>
           {detailRow('Isolatie', listing.isolatie)}
           {detailRow('Verwarming', listing.verwarming)}
           {detailRow('Dak', listing.dak_type)}
+          {plafondhoogte?.geschatte_verdiepingshoogte && detailRow(
+            'Geschatte plafondhoogte',
+            `~${plafondhoogte.geschatte_verdiepingshoogte.toFixed(1)}m (${plafondhoogte.label}${plafondhoogte.betrouwbaarheid ? `, ${plafondhoogte.betrouwbaarheid}` : ''})`
+          )}
         </div>
       )}
     </div>
@@ -547,7 +599,28 @@ function AnalyseColumn({ result, onCopy, copied }: {
 
       {/* Funda listing */}
       {result.funda_listing && (
-        <FundaListingPanel listing={result.funda_listing} bagWoonoppervlakte={result.woonoppervlakte} />
+        <FundaListingPanel listing={result.funda_listing} bagWoonoppervlakte={result.woonoppervlakte} plafondhoogte={result.plafondhoogte} />
+      )}
+
+      {/* Plafondhoogte (standalone als geen Funda listing) */}
+      {!result.funda_listing && result.plafondhoogte?.geschatte_verdiepingshoogte && (
+        <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
+          <h3 className="text-sm font-semibold text-orange-800 mb-2">Geschatte plafondhoogte</h3>
+          <div className="flex justify-between text-sm">
+            <span className="text-orange-600">Verdiepingshoogte</span>
+            <span className="text-orange-800 font-medium text-right max-w-[60%]">
+              ~{result.plafondhoogte.geschatte_verdiepingshoogte.toFixed(1)}m ({result.plafondhoogte.label}{result.plafondhoogte.betrouwbaarheid ? `, ${result.plafondhoogte.betrouwbaarheid}` : ''})
+            </span>
+          </div>
+          {result.plafondhoogte.details && (
+            <div className="text-xs text-orange-400 mt-1">{result.plafondhoogte.details}</div>
+          )}
+        </div>
+      )}
+
+      {/* Glasvezel beschikbaarheid */}
+      {result.glasvezel && (
+        <GlasvezelPanel glasvezel={result.glasvezel} />
       )}
 
       {/* Marktindicatoren */}
