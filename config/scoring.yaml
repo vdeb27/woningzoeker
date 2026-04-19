@@ -1,4 +1,15 @@
 # Scoring configuration for neighborhood analysis
+
+# ORS (OpenRouteService) multimodale afstandsdrempels
+# Bepaalt welke modaliteit gebruikt wordt op basis van hemelsbreed afstand
+ors_drempels:
+  lopen:
+    max_hemelsbreed_m: 800       # < 800m hemelsbreed → foot-walking
+    max_reistijd_min: 10         # > 10 min lopen → promoveer naar fietsen
+  fietsen:
+    max_hemelsbreed_m: 5000      # < 5000m hemelsbreed → cycling-regular
+    max_reistijd_min: 30         # > 30 min fietsen → promoveer naar auto
+  # alles >= 5000m hemelsbreed → driving-car
 # Each indicator has a weight and direction
 # Column names reference indicator keys from collectors, not raw CBS column names
 

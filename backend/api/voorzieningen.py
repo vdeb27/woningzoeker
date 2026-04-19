@@ -15,6 +15,7 @@ from collectors import (
     create_osm_overpass_collector,
     create_cycling_collector,
     create_ov_collector,
+    create_ors_matrix_collector,
     geocode_address_pdok,
 )
 
@@ -27,6 +28,7 @@ _nabijheid_collector = None
 _osm_collector = None
 _cycling_collector = None
 _ov_collector = None
+_ors_matrix_collector = None
 _werklocaties = None
 
 
@@ -37,10 +39,18 @@ def _get_nabijheid_collector():
     return _nabijheid_collector
 
 
+def _get_ors_matrix_collector():
+    global _ors_matrix_collector
+    if _ors_matrix_collector is None:
+        _ors_matrix_collector = create_ors_matrix_collector()
+    return _ors_matrix_collector
+
+
 def _get_osm_collector():
     global _osm_collector
     if _osm_collector is None:
-        _osm_collector = create_osm_overpass_collector()
+        ors = _get_ors_matrix_collector()
+        _osm_collector = create_osm_overpass_collector(ors_collector=ors)
     return _osm_collector
 
 
@@ -81,6 +91,9 @@ class VoorzieningItem(BaseModel):
     categorie: str
     afstand_m: int
     looptijd_min: int
+    reistijd_min: int = 0
+    modaliteit: str = "lopen"
+    is_ors_afstand: bool = False
     lat: float
     lng: float
 
@@ -277,12 +290,16 @@ def _build_response(
         osm_collector = _get_osm_collector()
         osm_result = osm_collector.get_voorzieningen(lat, lng, radius_m)
         for v in osm_result.voorzieningen:
+            reistijd_min = max(1, round(v.reistijd_sec / 60)) if v.reistijd_sec else max(1, round(v.afstand_m / 83.3))
             osm_items.append(VoorzieningItem(
                 naam=v.naam,
                 type=v.type,
                 categorie=v.categorie,
                 afstand_m=v.afstand_m,
-                looptijd_min=max(1, round(v.afstand_m / 83.3)),  # 5 km/h
+                looptijd_min=max(1, round(v.afstand_m / 83.3)),  # 5 km/h schatting
+                reistijd_min=reistijd_min,
+                modaliteit=v.modaliteit or "lopen",
+                is_ors_afstand=not v.is_fallback,
                 lat=v.lat,
                 lng=v.lng,
             ))

@@ -51,6 +51,11 @@ from collectors.miljoenhuizen_collector import (
     PrijsHistorieEntry,
     create_miljoenhuizen_collector,
 )
+from collectors.ors_matrix_collector import (
+    ORSMatrixCollector,
+    ORSMatrixResult,
+    create_ors_matrix_collector,
+)
 from collectors.osm_overpass_collector import (
     OSMOverpassCollector,
     OverpassResult,
@@ -189,6 +194,10 @@ __all__ = [
     "MiljoenhuizenWoning",
     "PrijsHistorieEntry",
     "create_miljoenhuizen_collector",
+    # ORS Matrix (multimodale afstanden)
+    "ORSMatrixCollector",
+    "ORSMatrixResult",
+    "create_ors_matrix_collector",
     # OSM Overpass
     "OSMOverpassCollector",
     "OverpassResult",
