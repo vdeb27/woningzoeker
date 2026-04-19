@@ -714,7 +714,7 @@ export async function fetchScholenNabij(params: {
   lng: number
   radius?: number
   type?: string
-}): Promise<(SchoolSummary & { afstand_m: number })[]> {
+}): Promise<(SchoolSummary & { afstand_m: number; reistijd_min: number; modaliteit: string })[]> {
   const searchParams = new URLSearchParams({
     lat: String(params.lat),
     lng: String(params.lng),
@@ -735,6 +735,9 @@ export interface VoorzieningItem {
   categorie: string
   afstand_m: number
   looptijd_min: number
+  reistijd_min: number
+  modaliteit: string  // "lopen" | "fietsen" | "auto"
+  is_ors_afstand: boolean
   lat: number
   lng: number
 }
