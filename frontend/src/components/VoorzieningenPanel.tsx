@@ -120,6 +120,18 @@ function CBSAfstandenSection({ afstanden }: { afstanden: Record<string, CBSAfsta
   )
 }
 
+const MODALITEIT_ICONS: Record<string, string> = {
+  lopen: '\u{1F6B6}',
+  fietsen: '\u{1F6B2}',
+  auto: '\u{1F697}',
+}
+
+function reistijdLabel(item: VoorzieningItem): string {
+  const min = item.reistijd_min || item.looptijd_min
+  const icon = MODALITEIT_ICONS[item.modaliteit] || MODALITEIT_ICONS.lopen
+  return `${icon} ${min} min`
+}
+
 function OSMLocatiesSection({ voorzieningen }: { voorzieningen: VoorzieningItem[] }) {
   const [openCategorie, setOpenCategorie] = useState<string | null>(null)
 
@@ -155,7 +167,7 @@ function OSMLocatiesSection({ voorzieningen }: { voorzieningen: VoorzieningItem[
                 <div key={idx} className="flex justify-between items-center text-xs py-1 border-t border-gray-100 first:border-0">
                   <span className="text-gray-700 truncate mr-2" title={item.naam}>{item.naam}</span>
                   <span className={`px-1.5 py-0.5 rounded whitespace-nowrap ${afstandMKleur(item.afstand_m)}`}>
-                    {item.afstand_m}m ({item.looptijd_min} min)
+                    {item.afstand_m}m &middot; {reistijdLabel(item)}
                   </span>
                 </div>
               ))}
@@ -405,7 +417,7 @@ function VoorzieningenKaart({ data }: { data: VoorzieningenResponse }) {
               <div className="text-xs">
                 <div className="font-medium">{v.naam}</div>
                 <div className="text-gray-500">{CATEGORIE_LABELS[v.categorie] || v.categorie}</div>
-                <div>{v.afstand_m}m ({v.looptijd_min} min lopen)</div>
+                <div>{v.afstand_m}m &middot; {reistijdLabel(v)}</div>
               </div>
             </Popup>
           </CircleMarker>
@@ -527,7 +539,7 @@ export default function VoorzieningenPanel({ postcode, huisnummer }: Voorziening
       <VoorzieningenKaart data={data} />
 
       <p className="text-xs text-gray-400">
-        Bronnen: CBS Nabijheid voorzieningen, OpenStreetMap, OpenRouteService, OVapi.nl. Afstanden zijn hemelsbreed (CBS), fietsroute (ORS) of geschat (OV).
+        Bronnen: CBS Nabijheid voorzieningen, OpenStreetMap, OpenRouteService, OVapi.nl. CBS-afstanden zijn hemelsbreed. OSM-afstanden zijn routeafstanden via ORS ({'\u{1F6B6}'} lopen, {'\u{1F6B2}'} fietsen, {'\u{1F697}'} auto).
       </p>
     </div>
   )
