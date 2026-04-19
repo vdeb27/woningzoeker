@@ -119,6 +119,19 @@ from collectors.glasvezel_collector import (
     GlasvezelResult,
     create_glasvezel_collector,
 )
+from collectors.perceelgrens_collector import (
+    PerceelgrensCollector,
+    PerceelgrensResult,
+    create_perceelgrens_collector,
+)
+from collectors.bgt_boom_collector import (
+    BgtBoomCollector,
+    create_bgt_boom_collector,
+)
+from collectors.bgt_wegdeel_collector import (
+    BgtWegdeelCollector,
+    create_bgt_wegdeel_collector,
+)
 from collectors.funda_collector import (
     FundaCollector,
     PropertyListing,
@@ -232,6 +245,16 @@ __all__ = [
     "GlasvezelCollector",
     "GlasvezelResult",
     "create_glasvezel_collector",
+    # Perceelgrenzen (Kadaster)
+    "PerceelgrensCollector",
+    "PerceelgrensResult",
+    "create_perceelgrens_collector",
+    # BGT Bomen + AHN
+    "BgtBoomCollector",
+    "create_bgt_boom_collector",
+    # BGT Wegdelen (voorkant-detectie)
+    "BgtWegdeelCollector",
+    "create_bgt_wegdeel_collector",
     # Funda
     "FundaCollector",
     "PropertyListing",

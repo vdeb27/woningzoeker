@@ -164,6 +164,32 @@ class GlasvezelResponse(BaseModel):
     adres_gevonden: bool = False
 
 
+class OrientatieResponse(BaseModel):
+    """Zon en oriëntatie analyse."""
+    tuin_orientatie: Optional[str] = None
+    tuin_azimut: Optional[float] = None
+    tuin_oppervlakte_berekend: Optional[float] = None
+    zon_uren_zomer: Optional[float] = None
+    zon_uren_lente: Optional[float] = None
+    zon_uren_winter: Optional[float] = None
+    zon_label: Optional[str] = None
+    schaduw_eigen_gebouw: Optional[str] = None
+    schaduw_buren: Optional[str] = None
+    schaduw_bomen: Optional[str] = None
+    effectieve_tuin_diepte: Optional[float] = None
+    zonnepanelen_score: Optional[int] = None
+    zonnepanelen_label: Optional[str] = None
+    dak_orientatie: Optional[str] = None
+    dak_hellingshoek: Optional[float] = None
+    geschikt_dakoppervlak: Optional[float] = None
+    funda_tuin_orientatie: Optional[str] = None
+    funda_tuin_oppervlakte: Optional[int] = None
+    tuin_oppervlakte_bron: Optional[str] = None
+    methode: Optional[str] = None
+    betrouwbaarheid: Optional[str] = None
+    details: Optional[str] = None
+
+
 class FundaListing(BaseModel):
     """Funda listing data for a property."""
     url: str
@@ -317,6 +343,9 @@ class EnhancedWaardebepalingResponse(BaseModel):
 
     # Glasvezel beschikbaarheid
     glasvezel: Optional[GlasvezelResponse] = None
+
+    # Zon en oriëntatie
+    orientatie: Optional[OrientatieResponse] = None
 
     # Saved woning reference
     woning_id: Optional[int] = None
@@ -750,6 +779,70 @@ WKPB_WFS_URL = "https://service.pdok.nl/kadaster/wkpb/wfs/v1_0"
 PDOK_LOCATIE_URL = "https://api.pdok.nl/bzk/locatieserver/search/v3_1/free"
 
 
+def _lookup_pand_id_pdok(
+    postcode: str, huisnummer: int
+) -> tuple[Optional[str], Optional[float], Optional[float]]:
+    """Lookup pand identificatie and RD coordinates via free PDOK.
+
+    Returns (pand_id, rd_x, rd_y) where rd_x/rd_y are the address
+    coordinates from the PDOK locatieserver.
+    """
+    rd_x, rd_y = None, None
+    try:
+        # Step 1: Get adresseerbaarobject_id + centroid from PDOK Locatieserver
+        resp = requests.get(
+            "https://api.pdok.nl/bzk/locatieserver/search/v3_1/free",
+            params={
+                "q": f"{postcode} {huisnummer}",
+                "fq": "type:adres",
+                "fl": "adresseerbaarobject_id,centroide_rd",
+                "rows": 1,
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        docs = resp.json().get("response", {}).get("docs", [])
+        if not docs:
+            return None, None, None
+
+        # Parse RD coordinates from "POINT(x y)" format
+        centroid_str = docs[0].get("centroide_rd", "")
+        if centroid_str:
+            import re as _re
+            m = _re.match(r"POINT\(([\d.]+)\s+([\d.]+)\)", centroid_str)
+            if m:
+                rd_x = float(m.group(1))
+                rd_y = float(m.group(2))
+
+        vbo_id = docs[0].get("adresseerbaarobject_id")
+        if not vbo_id:
+            return None, rd_x, rd_y
+
+        # Step 2: Get pandidentificatie from PDOK BAG WFS
+        resp2 = requests.get(
+            "https://service.pdok.nl/lv/bag/wfs/v2_0",
+            params={
+                "service": "WFS",
+                "version": "2.0.0",
+                "request": "GetFeature",
+                "typeName": "bag:verblijfsobject",
+                "outputFormat": "application/json",
+                "CQL_FILTER": f"identificatie='{vbo_id}'",
+                "count": 1,
+            },
+            timeout=10,
+        )
+        resp2.raise_for_status()
+        features = resp2.json().get("features", [])
+        if features:
+            pand_id = features[0].get("properties", {}).get("pandidentificatie")
+            if pand_id:
+                return str(pand_id), rd_x, rd_y
+    except Exception:
+        pass
+    return None, rd_x, rd_y
+
+
 def _lookup_wkpb(postcode: str, huisnummer: int) -> Dict[str, Any]:
     """
     Query Kadaster WKPB (publiekrechtelijke beperkingen) for monument status.
@@ -1181,13 +1274,43 @@ def bereken_waarde_voor_adres(
 
     # Fetch 3DBAG data and calculate ceiling height estimation
     driedbag_result = None
+    driedbag = create_driedbag_collector()
     plafondhoogte_result = None
+    pand_identificatie = None
+    adres_rd_x, adres_rd_y = None, None  # True address coordinates from PDOK
+
+    # Always get PDOK coordinates (authoritative location)
+    pdok_pand_id, adres_rd_x, adres_rd_y = _lookup_pand_id_pdok(
+        request.postcode, request.huisnummer
+    )
+
     if bag_data and bag_data.get("pand_identificaties"):
+        pand_identificatie = str(bag_data["pand_identificaties"][0])
+    elif pdok_pand_id:
+        pand_identificatie = pdok_pand_id
+
+    if pand_identificatie:
         try:
-            driedbag = create_driedbag_collector()
-            driedbag_result = driedbag.get_building_data(
-                str(bag_data["pand_identificaties"][0])
-            )
+            driedbag_result = driedbag.get_building_data(pand_identificatie)
+        except Exception:
+            pass
+
+    # Validate: if 3DBAG footprint is far from PDOK address, use spatial lookup
+    if driedbag_result and driedbag_result.footprint_rd and adres_rd_x and adres_rd_y:
+        fp = driedbag_result.footprint_rd
+        fp_cx = sum(p[0] for p in fp) / len(fp)
+        fp_cy = sum(p[1] for p in fp) / len(fp)
+        dist = ((fp_cx - adres_rd_x) ** 2 + (fp_cy - adres_rd_y) ** 2) ** 0.5
+        if dist > 100:  # footprint > 100m from address = wrong building
+            driedbag_result = None
+
+    # Fallback: spatial lookup by RD coordinates
+    if (not driedbag_result or not driedbag_result.footprint_rd) and adres_rd_x and adres_rd_y:
+        try:
+            loc_result = driedbag.get_building_by_location(adres_rd_x, adres_rd_y)
+            if loc_result and loc_result.footprint_rd:
+                driedbag_result = loc_result
+                pand_identificatie = loc_result.pand_identificatie
         except Exception:
             pass
 
@@ -1216,6 +1339,102 @@ def bereken_waarde_voor_adres(
             betrouwbaarheid=plafondhoogte_data.betrouwbaarheid,
             details=plafondhoogte_data.details,
         )
+
+    # Zon en oriëntatie analyse
+    orientatie_response = None
+    try:
+        from services.orientatie import bereken_orientatie
+        from collectors.perceelgrens_collector import create_perceelgrens_collector
+        from collectors.bgt_boom_collector import create_bgt_boom_collector
+        from collectors.bgt_wegdeel_collector import create_bgt_wegdeel_collector
+
+        footprint_rd = driedbag_result.footprint_rd if driedbag_result else None
+
+        # Gebruik PDOK adrescoördinaten als primaire locatie (altijd betrouwbaar),
+        # footprint centroid als fallback
+        orientatie_rd_x, orientatie_rd_y = adres_rd_x, adres_rd_y
+        if not orientatie_rd_x and footprint_rd:
+            orientatie_rd_x = sum(p[0] for p in footprint_rd) / len(footprint_rd)
+            orientatie_rd_y = sum(p[1] for p in footprint_rd) / len(footprint_rd)
+
+        perceel_polygon = None
+        buurtgebouwen = []
+        bomen = []
+        road_polygons = []
+
+        if orientatie_rd_x and orientatie_rd_y:
+            # BGT wegdelen ophalen (voorkant-detectie)
+            try:
+                weg_collector = create_bgt_wegdeel_collector()
+                road_polygons = weg_collector.get_roads(
+                    orientatie_rd_x, orientatie_rd_y, radius=50
+                )
+            except Exception:
+                pass
+
+            # Perceelgrenzen ophalen
+            try:
+                perceel_collector = create_perceelgrens_collector()
+                perceel_result = perceel_collector.get_perceel(
+                    orientatie_rd_x, orientatie_rd_y,
+                    building_footprint_rd=footprint_rd,
+                )
+                perceel_polygon = perceel_result.perceel_polygon_rd
+            except Exception:
+                pass
+
+            # Buurtgebouwen ophalen
+            try:
+                pand_id = driedbag_result.pand_identificatie if driedbag_result else None
+                buurtgebouwen = driedbag.get_surrounding_buildings(
+                    orientatie_rd_x, orientatie_rd_y,
+                    radius=75,
+                    exclude_pand_id=pand_id,
+                )
+            except Exception:
+                pass
+
+            # BGT bomen met AHN hoogtes
+            try:
+                boom_collector = create_bgt_boom_collector()
+                bomen = boom_collector.get_trees(
+                    orientatie_rd_x, orientatie_rd_y, radius=75
+                )
+            except Exception:
+                pass
+
+        # Funda tuin-data voor vergelijking
+        funda_tuin_orientatie = None
+        funda_tuin_oppervlakte = None
+        if funda_listing_data:
+            funda_tuin_orientatie = funda_listing_data.tuin_orientatie
+            funda_tuin_oppervlakte = funda_listing_data.tuin_oppervlakte
+
+        orientatie_data = bereken_orientatie(
+            rd_x=orientatie_rd_x or 0.0,
+            rd_y=orientatie_rd_y or 0.0,
+            building_footprint_rd=footprint_rd,
+            perceel_polygon_rd=perceel_polygon,
+            gebouwhoogte=driedbag_result.gebouwhoogte if driedbag_result else None,
+            dak_azimut=driedbag_result.dak_azimut if driedbag_result else None,
+            dak_hellingshoek=driedbag_result.dak_hellingshoek if driedbag_result else None,
+            opp_dak_schuin=driedbag_result.opp_dak_schuin if driedbag_result else None,
+            opp_dak_plat=driedbag_result.opp_dak_plat if driedbag_result else None,
+            dak_type=driedbag_result.dak_type if driedbag_result else None,
+            dak_delen=driedbag_result.dak_delen if driedbag_result else None,
+            buurtgebouwen=buurtgebouwen,
+            bomen=bomen,
+            road_polygons=road_polygons,
+            funda_tuin_orientatie=funda_tuin_orientatie,
+            funda_tuin_oppervlakte=funda_tuin_oppervlakte,
+        )
+
+        if orientatie_data.tuin_orientatie or orientatie_data.zonnepanelen_score:
+            orientatie_response = OrientatieResponse(
+                **orientatie_data.to_dict()
+            )
+    except Exception:
+        pass
 
     # Fetch CBS market data for dynamic overbid percentage
     cbs_market_data = None
@@ -1567,5 +1786,6 @@ def bereken_waarde_voor_adres(
         longitude=geo["lng"] if geo else None,
         plafondhoogte=plafondhoogte_response,
         glasvezel=glasvezel_response,
+        orientatie=orientatie_response,
         woning_id=saved_woning_id,
     )
