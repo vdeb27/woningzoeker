@@ -203,6 +203,8 @@ export interface EnhancedWaardebepalingResponse {
   plafondhoogte?: PlafondhoogteResponse
   // Glasvezel beschikbaarheid
   glasvezel?: GlasvezelResponse
+  // Zon en oriëntatie
+  orientatie?: OrientatieResponse
   // Data sources
   data_bronnen: string[]
 }
@@ -262,6 +264,32 @@ export interface GlasvezelResponse {
   dsl_snelheid?: number  // Mbit/s
   max_snelheid?: number  // Mbit/s
   adres_gevonden: boolean
+}
+
+// Zon en oriëntatie
+export interface OrientatieResponse {
+  tuin_orientatie?: string
+  tuin_azimut?: number
+  tuin_oppervlakte_berekend?: number
+  zon_uren_zomer?: number
+  zon_uren_lente?: number
+  zon_uren_winter?: number
+  zon_label?: string
+  schaduw_eigen_gebouw?: string
+  schaduw_buren?: string
+  schaduw_bomen?: string
+  effectieve_tuin_diepte?: number
+  zonnepanelen_score?: number
+  zonnepanelen_label?: string
+  dak_orientatie?: string
+  dak_hellingshoek?: number
+  geschikt_dakoppervlak?: number
+  funda_tuin_orientatie?: string
+  funda_tuin_oppervlakte?: number
+  tuin_oppervlakte_bron?: string
+  methode?: string
+  betrouwbaarheid?: string
+  details?: string
 }
 
 // GeoJSON types
