@@ -1,5 +1,6 @@
 """School API routes."""
 
+import logging
 import math
 from typing import List, Optional
 
@@ -7,8 +8,21 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from collectors import create_ors_matrix_collector
 from models import get_db
 from models.school import School
+
+logger = logging.getLogger(__name__)
+
+# Singleton ORS collector (lazy init)
+_ors_collector = None
+
+
+def _get_ors_collector():
+    global _ors_collector
+    if _ors_collector is None:
+        _ors_collector = create_ors_matrix_collector()
+    return _ors_collector
 
 router = APIRouter(prefix="/api/scholen", tags=["scholen"])
 
@@ -48,6 +62,8 @@ class SchoolDetail(SchoolSummary):
 
 class SchoolNabij(SchoolSummary):
     afstand_m: float  # Afstand in meters
+    reistijd_min: int = 0
+    modaliteit: str = "lopen"
 
 
 # ── Haversine ──
@@ -112,14 +128,38 @@ def scholen_nabij(
 
     schools = query.all()
 
-    # Exact afstand berekenen en filteren
-    results = []
+    # Exact afstand berekenen en filteren (haversine pre-filter)
+    candidates = []
     for s in schools:
         afstand = _haversine(lat, lng, s.lat, s.lng)
         if afstand <= radius:
-            school_dict = SchoolSummary.model_validate(s).model_dump()
-            school_dict["afstand_m"] = round(afstand)
-            results.append(school_dict)
+            candidates.append((s, round(afstand)))
+
+    if not candidates:
+        return []
+
+    # ORS routeafstanden ophalen
+    ors = _get_ors_collector()
+    destinations = [(s.lat, s.lng) for s, _ in candidates]
+    try:
+        ors_resultaten = ors.get_afstanden(lat, lng, destinations)
+    except Exception as exc:
+        logger.warning("ORS afstandsberekening voor scholen gefaald: %s", exc)
+        ors_resultaten = None
+
+    results = []
+    for i, (s, haversine_m) in enumerate(candidates):
+        school_dict = SchoolSummary.model_validate(s).model_dump()
+        if ors_resultaten and i < len(ors_resultaten):
+            ors_r = ors_resultaten[i]
+            school_dict["afstand_m"] = ors_r.afstand_m
+            school_dict["reistijd_min"] = max(1, round(ors_r.reistijd_sec / 60))
+            school_dict["modaliteit"] = ors_r.modaliteit
+        else:
+            school_dict["afstand_m"] = haversine_m
+            school_dict["reistijd_min"] = max(1, round(haversine_m / 83.3))
+            school_dict["modaliteit"] = "lopen"
+        results.append(school_dict)
 
     results.sort(key=lambda x: x["afstand_m"])
     return results[:limit]

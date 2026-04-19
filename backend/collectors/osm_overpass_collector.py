@@ -105,6 +105,9 @@ class Voorziening:
     afstand_m: int
     lat: float
     lng: float
+    reistijd_sec: int = 0       # ORS reistijd in seconden
+    modaliteit: str = ""        # "lopen", "fietsen", "auto"
+    is_fallback: bool = False   # True als haversine i.p.v. ORS
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -114,6 +117,9 @@ class Voorziening:
             "afstand_m": self.afstand_m,
             "lat": self.lat,
             "lng": self.lng,
+            "reistijd_sec": self.reistijd_sec,
+            "modaliteit": self.modaliteit,
+            "is_fallback": self.is_fallback,
         }
 
     @classmethod
@@ -125,6 +131,9 @@ class Voorziening:
             afstand_m=data["afstand_m"],
             lat=data["lat"],
             lng=data["lng"],
+            reistijd_sec=data.get("reistijd_sec", 0),
+            modaliteit=data.get("modaliteit", ""),
+            is_fallback=data.get("is_fallback", False),
         )
 
 
@@ -163,6 +172,7 @@ class OSMOverpassCollector:
     cache_dir: Path = field(default_factory=lambda: CACHE_DIR)
     cache_days: int = 7
     session: Optional[requests.Session] = None
+    ors_collector: Optional[Any] = None  # ORSMatrixCollector voor routeafstanden
     _last_request: float = field(default=0.0, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -209,6 +219,25 @@ class OSMOverpassCollector:
         except IOError:
             pass
 
+    def _verrijk_met_ors(self, lat: float, lng: float, voorzieningen: List[Voorziening]) -> None:
+        """Verrijk voorzieningen met ORS routeafstanden (in-place)."""
+        if not self.ors_collector or not voorzieningen:
+            return
+        try:
+            destinations = [(v.lat, v.lng) for v in voorzieningen]
+            ors_resultaten = self.ors_collector.get_afstanden(lat, lng, destinations)
+            for v, ors in zip(voorzieningen, ors_resultaten):
+                v.afstand_m = ors.afstand_m
+                v.reistijd_sec = ors.reistijd_sec
+                v.modaliteit = ors.modaliteit
+                v.is_fallback = ors.is_fallback
+            voorzieningen.sort(key=lambda v: v.afstand_m)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "ORS verrijking gefaald, haversine behouden: %s", exc
+            )
+
     def get_voorzieningen(self, lat: float, lng: float, radius_m: int = 1500) -> OverpassResult:
         """Fetch nearby facilities for given coordinates.
 
@@ -223,6 +252,12 @@ class OSMOverpassCollector:
         cache_key = self._cache_key(lat, lng, radius_m)
         cached = self._load_from_cache(cache_key)
         if cached is not None:
+            # Verrijk gecachete resultaten met ORS als dat nog niet gebeurd is
+            if self.ors_collector and cached.voorzieningen:
+                needs_ors = any(not v.modaliteit for v in cached.voorzieningen)
+                if needs_ors:
+                    self._verrijk_met_ors(lat, lng, cached.voorzieningen)
+                    self._save_to_cache(cache_key, cached)
             return cached
 
         self._rate_limit()
@@ -280,6 +315,8 @@ class OSMOverpassCollector:
 
         voorzieningen.sort(key=lambda v: v.afstand_m)
 
+        self._verrijk_met_ors(lat, lng, voorzieningen)
+
         result = OverpassResult(
             lat=lat,
             lng=lng,
@@ -290,8 +327,17 @@ class OSMOverpassCollector:
         return result
 
 
-def create_osm_overpass_collector(cache_dir: Optional[Path] = None) -> OSMOverpassCollector:
-    """Factory function with default cache directory."""
+def create_osm_overpass_collector(
+    cache_dir: Optional[Path] = None,
+    ors_collector: Optional[Any] = None,
+) -> OSMOverpassCollector:
+    """Factory function with default cache directory.
+
+    Args:
+        cache_dir: Cache directory override.
+        ors_collector: Optionele ORSMatrixCollector voor routeafstanden.
+            Als None, worden haversine afstanden gebruikt.
+    """
     if cache_dir is None:
         cache_dir = Path(__file__).parent.parent.parent / "data" / "cache" / "osm_overpass"
-    return OSMOverpassCollector(cache_dir=cache_dir)
+    return OSMOverpassCollector(cache_dir=cache_dir, ors_collector=ors_collector)
