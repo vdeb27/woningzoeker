@@ -1,5 +1,6 @@
 """API routes for OV bereikbaarheid (public transport accessibility)."""
 
+import asyncio
 import logging
 import re
 from pathlib import Path
@@ -10,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from collectors import create_ov_collector, create_cycling_collector, geocode_address_pdok
+from collectors import create_ors_matrix_collector
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +20,7 @@ router = APIRouter(prefix="/api", tags=["bereikbaarheid"])
 # Singleton collectors (lazy init)
 _ov_collector = None
 _cycling_collector = None
+_ors_matrix_collector = None
 _werklocaties = None
 
 
@@ -33,6 +36,13 @@ def _get_cycling_collector():
     if _cycling_collector is None:
         _cycling_collector = create_cycling_collector()
     return _cycling_collector
+
+
+def _get_ors_matrix_collector():
+    global _ors_matrix_collector
+    if _ors_matrix_collector is None:
+        _ors_matrix_collector = create_ors_matrix_collector()
+    return _ors_matrix_collector
 
 
 def _get_werklocaties() -> List[Dict]:
@@ -104,7 +114,7 @@ class ReistijdResponse(BaseModel):
 # --- Endpoints ---
 
 @router.get("/woningen/{woning_id}/bereikbaarheid", response_model=BereikbaarheidResponse)
-def woning_bereikbaarheid(woning_id: int):
+async def woning_bereikbaarheid(woning_id: int):
     """Get OV + cycling accessibility for a specific property."""
     from models.database import SessionLocal
     from models import Woning
@@ -134,11 +144,11 @@ def woning_bereikbaarheid(woning_id: int):
     finally:
         session.close()
 
-    return _build_bereikbaarheid(lat, lng)
+    return await _build_bereikbaarheid(lat, lng)
 
 
 @router.get("/locatie/reistijd", response_model=ReistijdResponse)
-def locatie_reistijd(
+async def locatie_reistijd(
     van: str = Query(..., description="Startcoordinaten (lat,lng)"),
     naar: str = Query(..., description="Bestemmingscoordinaten (lat,lng)"),
     modus: str = Query("ov", description="Reismodus: ov of fiets"),
@@ -172,7 +182,7 @@ def locatie_reistijd(
         )
     elif modus == "fiets":
         cycling = _get_cycling_collector()
-        route = cycling.get_route(van_lat, van_lng, naar_lat, naar_lng, "Bestemming")
+        route = await asyncio.to_thread(cycling.get_route, van_lat, van_lng, naar_lat, naar_lng, "Bestemming")
         return ReistijdResponse(
             van_lat=van_lat,
             van_lng=van_lng,
@@ -187,13 +197,22 @@ def locatie_reistijd(
         raise HTTPException(status_code=400, detail="Ongeldige modus, gebruik 'ov' of 'fiets'")
 
 
-def _build_bereikbaarheid(lat: float, lng: float) -> BereikbaarheidResponse:
+async def _build_bereikbaarheid(lat: float, lng: float) -> BereikbaarheidResponse:
     """Build bereikbaarheid response for given coordinates."""
     werklocaties = _get_werklocaties()
-
-    # OV data
     ov = _get_ov_collector()
-    bereikbaarheid = ov.get_bereikbaarheid(lat, lng, werklocaties)
+    ors = _get_ors_matrix_collector()
+
+    dest_coords = [(wl["lat"], wl["lng"]) for wl in werklocaties]
+
+    if dest_coords:
+        bereikbaarheid, ors_resultaten = await asyncio.gather(
+            asyncio.to_thread(ov.get_bereikbaarheid, lat, lng, werklocaties),
+            asyncio.to_thread(ors.get_afstanden, lat, lng, dest_coords),
+        )
+    else:
+        bereikbaarheid = await asyncio.to_thread(ov.get_bereikbaarheid, lat, lng, werklocaties)
+        ors_resultaten = []
 
     haltes = [
         OVHalteItem(
@@ -220,18 +239,14 @@ def _build_bereikbaarheid(lat: float, lng: float) -> BereikbaarheidResponse:
         for r in bereikbaarheid.reistijden
     ]
 
-    # Cycling data for comparison
     fiets_reistijden = []
-    if werklocaties:
-        cycling = _get_cycling_collector()
-        routes = cycling.get_routes_to_werklocaties(lat, lng, werklocaties)
-        for route in routes:
-            fiets_reistijden.append(FietsItem(
-                dest_naam=route.dest_naam,
-                afstand_km=route.afstand_km,
-                reistijd_min=route.reistijd_min,
-                error=route.error,
-            ))
+    for r in ors_resultaten:
+        naam = werklocaties[r.dest_index]["naam"] if r.dest_index < len(werklocaties) else "Bestemming"
+        fiets_reistijden.append(FietsItem(
+            dest_naam=naam,
+            afstand_km=round(r.afstand_m / 1000, 1),
+            reistijd_min=r.reistijd_sec // 60,
+        ))
 
     return BereikbaarheidResponse(
         lat=lat,
