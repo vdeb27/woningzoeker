@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
 from models import Buurt
+
+# Module-level caches: gerichte per-buurt lookups, 1 uur geldig.
+# Vervangt de bulk-load van alle 14k+ buurten per request (~7 seconden).
+_buurt_cache: Dict[str, Any] = {}       # buurt_code → (m2_price, score, gemeente_code, cached_at)
+_gemeente_cache: Dict[str, Any] = {}    # gemeente_code → (avg_m2_price, cached_at)
+_PRICE_CACHE_TTL = timedelta(hours=1)
 
 
 class BiedAdvies(str, Enum):
@@ -138,68 +145,82 @@ class ValuationService:
 
     def __init__(self, db: Optional[Session] = None, load_prices: bool = True):
         self.db = db
-        self._buurt_m2_prices: Dict[str, float] = {}
-        self._gemeente_m2_prices: Dict[str, float] = {}
-        self._buurt_scores: Dict[str, float] = {}
         self._market_overbid: float = self.DEFAULT_OVERBID_PERCENTAGE
-        self._prices_loaded: bool = False
 
-        if db and load_prices:
-            self._load_buurt_prices()
-
-    def _load_buurt_prices(self) -> None:
-        """Load neighborhood m² prices and scores from the database."""
-        if not self.db or self._prices_loaded:
+    def _fetch_buurt(self, buurt_code: str) -> None:
+        """Fetch a single buurt from DB into the module-level cache."""
+        if not self.db:
             return
-
         try:
-            buurten = self.db.query(Buurt).all()
-
-            for buurt in buurten:
-                if buurt.code and buurt.median_m2_prijs:
-                    self._buurt_m2_prices[buurt.code] = buurt.median_m2_prijs
-
-                    if buurt.gemeente_code:
-                        if buurt.gemeente_code not in self._gemeente_m2_prices:
-                            self._gemeente_m2_prices[buurt.gemeente_code] = []
-                        self._gemeente_m2_prices[buurt.gemeente_code].append(
-                            buurt.median_m2_prijs
-                        )
-
-                # Load buurt scores for quality correction
-                if buurt.code and buurt.score_totaal is not None:
-                    self._buurt_scores[buurt.code] = buurt.score_totaal
-
-            # Calculate average per gemeente
-            for gemeente_code, prices in list(self._gemeente_m2_prices.items()):
-                if prices:
-                    self._gemeente_m2_prices[gemeente_code] = sum(prices) / len(prices)
-                else:
-                    del self._gemeente_m2_prices[gemeente_code]
-
-            self._prices_loaded = True
-
+            buurt = self.db.query(Buurt).filter(Buurt.code == buurt_code).first()
+            _buurt_cache[buurt_code] = (
+                buurt.median_m2_prijs if buurt else None,
+                buurt.score_totaal if buurt else None,
+                buurt.gemeente_code if buurt else None,
+                datetime.now(),
+            )
         except Exception:
-            pass
+            _buurt_cache[buurt_code] = (None, None, None, datetime.now())
+
+    def _fetch_gemeente(self, gemeente_code: str) -> None:
+        """Compute gemeente average m2 price from DB into the module-level cache."""
+        if not self.db:
+            return
+        try:
+            buurten = (
+                self.db.query(Buurt)
+                .filter(Buurt.gemeente_code == gemeente_code, Buurt.median_m2_prijs.isnot(None))
+                .all()
+            )
+            avg = sum(b.median_m2_prijs for b in buurten) / len(buurten) if buurten else None
+            _gemeente_cache[gemeente_code] = (avg, datetime.now())
+        except Exception:
+            _gemeente_cache[gemeente_code] = (None, datetime.now())
+
+    def _buurt_cached(self, buurt_code: str) -> bool:
+        entry = _buurt_cache.get(buurt_code)
+        return entry is not None and datetime.now() - entry[3] < _PRICE_CACHE_TTL
+
+    def _gemeente_cached(self, gemeente_code: str) -> bool:
+        entry = _gemeente_cache.get(gemeente_code)
+        return entry is not None and datetime.now() - entry[1] < _PRICE_CACHE_TTL
+
+    def get_buurt_score(self, buurt_code: Optional[str]) -> Optional[float]:
+        """Return leefbaarheids-score for a buurt (0-1), or None."""
+        if not buurt_code:
+            return None
+        if not self._buurt_cached(buurt_code):
+            self._fetch_buurt(buurt_code)
+        entry = _buurt_cache.get(buurt_code)
+        return entry[1] if entry else None
 
     def get_buurt_m2_price(self, buurt_code: Optional[str]) -> tuple[float, str]:
+        """Return (m2_price, source) for the given buurt_code.
+
+        Source is one of: "buurt", "gemeente", "regio", "default".
+        Uses targeted DB queries with module-level TTL cache — no bulk load.
         """
-        Get m² price for a neighborhood with source indication.
+        if not buurt_code:
+            return self.DEFAULT_M2_PRICE, "default"
 
-        Returns tuple of (price, source) where source is one of:
-        - "buurt": Direct neighborhood data
-        - "gemeente": Municipality average
-        - "regio": Regional default
-        - "default": Global fallback
-        """
-        if buurt_code and buurt_code in self._buurt_m2_prices:
-            return self._buurt_m2_prices[buurt_code], "buurt"
+        # ── buurt-level lookup ──
+        if not self._buurt_cached(buurt_code):
+            self._fetch_buurt(buurt_code)
 
-        if buurt_code:
-            gemeente_code = buurt_code[:4] if len(buurt_code) >= 4 else None
-            if gemeente_code and gemeente_code in self._gemeente_m2_prices:
-                return self._gemeente_m2_prices[gemeente_code], "gemeente"
+        entry = _buurt_cache.get(buurt_code)
+        if entry and entry[0] is not None:
+            return entry[0], "buurt"
 
+        # ── gemeente-level fallback ──
+        gemeente_code = buurt_code[:4] if len(buurt_code) >= 4 else None
+        if gemeente_code:
+            if not self._gemeente_cached(gemeente_code):
+                self._fetch_gemeente(gemeente_code)
+            g_entry = _gemeente_cache.get(gemeente_code)
+            if g_entry and g_entry[0] is not None:
+                return g_entry[0], "gemeente"
+
+            # ── regional hardcoded fallback ──
             for gm_code, price in self.REGIONAL_M2_PRICES.items():
                 if buurt_code.startswith(gm_code):
                     return price, "regio"
@@ -207,8 +228,13 @@ class ValuationService:
         return self.DEFAULT_M2_PRICE, "default"
 
     def set_buurt_m2_prices(self, prices: Dict[str, float]) -> None:
-        """Set neighborhood m2 prices from external data."""
-        self._buurt_m2_prices = prices
+        """Override neighborhood m2 prices (populates module-level cache)."""
+        now = datetime.now()
+        for code, price in prices.items():
+            existing = _buurt_cache.get(code)
+            score = existing[1] if existing else None
+            gemeente = existing[2] if existing else None
+            _buurt_cache[code] = (price, score, gemeente, now)
 
     def set_market_overbid(self, percentage: float) -> None:
         """Set current market overbidding percentage."""
@@ -274,7 +300,7 @@ class ValuationService:
         if not buurt_code:
             return 0.0
 
-        score = self._buurt_scores.get(buurt_code)
+        score = self.get_buurt_score(buurt_code)
         if score is None:
             return 0.0
 
@@ -402,7 +428,7 @@ class ValuationService:
 
         # Calculate confidence
         has_buurt_data = price_source in ("buurt", "gemeente")
-        has_buurt_scores = buurt_code is not None and buurt_code in self._buurt_scores
+        has_buurt_scores = buurt_code is not None and self.get_buurt_score(buurt_code) is not None
         confidence, confidence_factors = self._calculate_confidence(
             buurt_m2_prijs=buurt_m2_prijs,
             energielabel=energielabel,
