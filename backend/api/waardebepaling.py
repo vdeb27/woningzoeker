@@ -58,6 +58,16 @@ def _get_cbs_buurt():
     return _cbs_buurt_collector
 
 
+# Monument-cache: alle drie WFS/API-calls samen gecached per adres (30 dagen TTL)
+# Monument-status verandert zelden; caching bespaart ~240–500ms per request.
+_monument_cache: Dict[str, Any] = {}
+_MONUMENT_CACHE_TTL = timedelta(days=30)
+
+
+def _monument_cache_key(postcode: str, huisnummer: int) -> str:
+    return f"{postcode.replace(' ', '').upper()}_{huisnummer}"
+
+
 # ============================================================================
 # Request/Response Models
 # ============================================================================
@@ -987,6 +997,11 @@ def _lookup_monument(
     gem_monument_cached=None,
 ) -> MonumentResponse:
     """Look up monument status from all sources."""
+    cache_key = _monument_cache_key(postcode, huisnummer)
+    cached = _monument_cache.get(cache_key)
+    if cached and datetime.now() - cached["ts"] < _MONUMENT_CACHE_TTL:
+        return cached["result"]
+
     rijksmonument_info = None
     gemeentelijk_info = None
     beschermd_info = None
@@ -1080,13 +1095,15 @@ def _lookup_monument(
         except Exception:
             pass
 
-    return MonumentResponse(
+    monument_result = MonumentResponse(
         rijksmonument=rijksmonument_info,
         gemeentelijk_monument=gemeentelijk_info,
         beschermd_gezicht=beschermd_info,
         unesco=unesco_info,
         heeft_monumentstatus=heeft_status,
     )
+    _monument_cache[cache_key] = {"result": monument_result, "ts": datetime.now()}
+    return monument_result
 
 
 @router.get("/adres/{postcode}/{huisnummer}/monument", response_model=MonumentResponse)
