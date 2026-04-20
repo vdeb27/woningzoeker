@@ -529,79 +529,23 @@ class CBSBuurtCollector:
 
 def lookup_buurt_code_pdok(postcode: str, huisnummer: int) -> Optional[str]:
     """Look up buurt code for an address using PDOK Locatieserver."""
-    pc = postcode.replace(" ", "").upper()
-    url = "https://api.pdok.nl/bzk/locatieserver/search/v3_1/free"
-    params = {
-        "q": f"{pc} {huisnummer}",
-        "fq": "type:adres",
-        "rows": 1,
-        "fl": "buurtcode,buurtnaam,wijkcode,wijknaam,gemeentecode,gemeentenaam",
-    }
-    try:
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        docs = data.get("response", {}).get("docs", [])
-        if docs:
-            buurt_code = docs[0].get("buurtcode")
-            if buurt_code:
-                if not buurt_code.startswith("BU"):
-                    buurt_code = f"BU{buurt_code}"
-                return buurt_code
-    except requests.RequestException:
-        pass
-    return None
+    from utils.pdok import geocode_pdok_full
+    result = geocode_pdok_full(postcode, huisnummer)
+    return result.buurt_code if result else None
 
 
 def geocode_address_pdok(postcode: str, huisnummer: int) -> Optional[Dict[str, Any]]:
-    """Geocode an address via PDOK Locatieserver, returning lat, lng, buurt_code, buurt_naam.
-
-    Returns dict with keys: lat, lng, buurt_code, buurt_naam, or None on failure.
-    """
-    import re
-
-    pc = postcode.replace(" ", "").upper()
-    url = "https://api.pdok.nl/bzk/locatieserver/search/v3_1/free"
-    params = {
-        "q": f"{pc} {huisnummer}",
-        "fq": "type:adres",
-        "rows": 1,
-        "fl": "buurtcode,buurtnaam,centroide_ll",
-    }
-    try:
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        docs = data.get("response", {}).get("docs", [])
-        if not docs:
-            return None
-
-        doc = docs[0]
-        buurt_code = doc.get("buurtcode")
-        if buurt_code and not buurt_code.startswith("BU"):
-            buurt_code = f"BU{buurt_code}"
-
-        buurt_naam = doc.get("buurtnaam")
-
-        centroide = doc.get("centroide_ll")
-        lat, lng = None, None
-        if centroide:
-            coord_match = re.match(r"POINT\(([\d.]+)\s+([\d.]+)\)", centroide)
-            if coord_match:
-                lng = float(coord_match.group(1))
-                lat = float(coord_match.group(2))
-
-        if lat is None or lng is None:
-            return None
-
-        return {
-            "lat": lat,
-            "lng": lng,
-            "buurt_code": buurt_code,
-            "buurt_naam": buurt_naam,
-        }
-    except requests.RequestException:
+    """Geocode an address via PDOK Locatieserver, returning lat, lng, buurt_code, buurt_naam."""
+    from utils.pdok import geocode_pdok_full
+    result = geocode_pdok_full(postcode, huisnummer)
+    if result is None:
         return None
+    return {
+        "lat": result.lat,
+        "lng": result.lng,
+        "buurt_code": result.buurt_code,
+        "buurt_naam": result.buurt_naam,
+    }
 
 
 def create_cbs_buurt_collector() -> CBSBuurtCollector:
