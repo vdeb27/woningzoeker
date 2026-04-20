@@ -386,6 +386,9 @@ class EnhancedWaardebepalingResponse(BaseModel):
     # Saved woning reference
     woning_id: Optional[int] = None
 
+    # 3DBAG pand ID — doorgeven aan /3d endpoint voor gecachede oriëntatie-opvraging
+    pand_identificatie: Optional[str] = None
+
     # Performance debug (only populated when ?debug=true)
     timing_breakdown: Optional[dict] = None
 
@@ -1473,111 +1476,8 @@ async def bereken_waarde_voor_adres(
         if dist > 100:
             driedbag_result = None
 
-    if (not driedbag_result or not driedbag_result.footprint_rd) and adres_rd_x and adres_rd_y:
-        t_fallback = time.perf_counter()
-        try:
-            loc_result = await asyncio.to_thread(
-                driedbag_inst.get_building_by_location, adres_rd_x, adres_rd_y
-            )
-            if loc_result and loc_result.footprint_rd:
-                driedbag_result = loc_result
-                pand_identificatie = loc_result.pand_identificatie
-        except Exception:
-            pass
-        timer.record("driedbag_fallback", t_fallback)
-
-    # ─── Wave 3: parallel — gebruikt 3DBAG footprint ───
-    footprint_rd = driedbag_result.footprint_rd if driedbag_result else None
-    orientatie_rd_x, orientatie_rd_y = adres_rd_x, adres_rd_y
-    if not orientatie_rd_x and footprint_rd:
-        orientatie_rd_x = sum(p[0] for p in footprint_rd) / len(footprint_rd)
-        orientatie_rd_y = sum(p[1] for p in footprint_rd) / len(footprint_rd)
-
-    perceel_polygon = None
-    buurtgebouwen = []
-    bomen = []
-    road_polygons = []
-
-    if orientatie_rd_x and orientatie_rd_y:
-        from collectors.perceelgrens_collector import create_perceelgrens_collector
-        from collectors.bgt_boom_collector import create_bgt_boom_collector
-        from collectors.bgt_wegdeel_collector import create_bgt_wegdeel_collector
-
-        t_w3 = time.perf_counter()
-
-        def _get_perceel():
-            col = create_perceelgrens_collector()
-            result = col.get_perceel(
-                orientatie_rd_x, orientatie_rd_y,
-                building_footprint_rd=footprint_rd,
-            )
-            return result.perceel_polygon_rd if result else None
-
-        def _get_roads():
-            return create_bgt_wegdeel_collector().get_roads(
-                orientatie_rd_x, orientatie_rd_y, radius=50
-            )
-
-        def _get_trees():
-            return create_bgt_boom_collector().get_trees(
-                orientatie_rd_x, orientatie_rd_y, radius=75
-            )
-
-        def _get_buurtgebouwen():
-            pand_id = driedbag_result.pand_identificatie if driedbag_result else None
-            return driedbag_inst.get_surrounding_buildings(
-                orientatie_rd_x, orientatie_rd_y,
-                radius=75,
-                exclude_pand_id=pand_id,
-            )
-
-        (
-            perceel_polygon,
-            road_polygons_raw,
-            bomen_raw,
-            buurtgebouwen_raw,
-        ) = await asyncio.gather(
-            _timed("perceel", _get_perceel),
-            _timed("bgt_roads", _get_roads),
-            _timed("bgt_bomen", _get_trees),
-            _timed("buurtgebouwen", _get_buurtgebouwen),
-        )
-        timer.record("wave3_total", t_w3)
-
-        road_polygons = road_polygons_raw or []
-        bomen = bomen_raw or []
-        buurtgebouwen = buurtgebouwen_raw or []
-
-    # Oriëntatie berekening
-    orientatie_response = None
-    if orientatie_rd_x and orientatie_rd_y:
-        try:
-            from services.orientatie import bereken_orientatie
-            funda_tuin_orientatie = funda_listing_data.tuin_orientatie if funda_listing_data else None
-            funda_tuin_oppervlakte = funda_listing_data.tuin_oppervlakte if funda_listing_data else None
-
-            orientatie_data = bereken_orientatie(
-                rd_x=orientatie_rd_x,
-                rd_y=orientatie_rd_y,
-                building_footprint_rd=footprint_rd,
-                perceel_polygon_rd=perceel_polygon,
-                gebouwhoogte=driedbag_result.gebouwhoogte if driedbag_result else None,
-                dak_azimut=driedbag_result.dak_azimut if driedbag_result else None,
-                dak_hellingshoek=driedbag_result.dak_hellingshoek if driedbag_result else None,
-                opp_dak_schuin=driedbag_result.opp_dak_schuin if driedbag_result else None,
-                opp_dak_plat=driedbag_result.opp_dak_plat if driedbag_result else None,
-                dak_type=driedbag_result.dak_type if driedbag_result else None,
-                dak_delen=driedbag_result.dak_delen if driedbag_result else None,
-                buurtgebouwen=buurtgebouwen,
-                bomen=bomen,
-                road_polygons=road_polygons,
-                funda_tuin_orientatie=funda_tuin_orientatie,
-                funda_tuin_oppervlakte=funda_tuin_oppervlakte,
-            )
-            if orientatie_data.tuin_orientatie or orientatie_data.zonnepanelen_score:
-                orientatie_response = OrientatieResponse(**orientatie_data.to_dict())
-        except Exception:
-            pass
+    # Wave 3 (perceel, BGT, buurtgebouwen) en oriëntatie zijn verplaatst
+    # naar het /3d endpoint dat asynchroon door de frontend wordt aangeroepen.
 
     # Plafondhoogte berekening
     plafondhoogte_response = None
@@ -1869,7 +1769,114 @@ async def bereken_waarde_voor_adres(
         longitude=geo_lng,
         plafondhoogte=plafondhoogte_response,
         glasvezel=glasvezel_response,
-        orientatie=orientatie_response,
+        orientatie=None,
+        pand_identificatie=pand_identificatie,
         woning_id=saved_woning_id,
         timing_breakdown=timer.to_dict() if debug else None,
     )
+
+
+# ============================================================================
+# 3D Endpoint — oriëntatie, schaduw en zonanalyse (asynchroon, slow on cold)
+# ============================================================================
+
+@router.get("/waardebepaling/adres/{postcode}/{huisnummer}/3d", response_model=OrientatieResponse)
+async def get_waardebepaling_3d(
+    postcode: str,
+    huisnummer: int,
+    pand_id: Optional[str] = Query(None, description="3DBAG pand ID uit de waardebepaling response"),
+):
+    """Compute orientation and shadow analysis via 3DBAG spatial data.
+
+    Fast on warm cache (file-cached results). Slow on first call for a new address
+    (15-32s for 3DBAG API). The frontend calls this endpoint in parallel with the
+    main valuation endpoint and shows a skeleton loader until it resolves.
+    """
+    geo = geocode_pdok_full(postcode, huisnummer)
+    if not geo:
+        raise HTTPException(status_code=404, detail="Adres niet gevonden via PDOK")
+
+    rd_x, rd_y = geo.rd_x, geo.rd_y
+    driedbag_inst = create_driedbag_collector()
+    driedbag_result = None
+
+    # Stap 1: 3DBAG building data ophalen (file-cached na eerste aanroep)
+    if pand_id:
+        try:
+            driedbag_result = await asyncio.to_thread(driedbag_inst.get_building_data, pand_id)
+        except Exception:
+            pass
+
+    # Stap 2: Footprint validatie — gooi weg als het gebouw >100m van het adres ligt
+    if driedbag_result and driedbag_result.footprint_rd:
+        fp = driedbag_result.footprint_rd
+        fp_cx = sum(p[0] for p in fp) / len(fp)
+        fp_cy = sum(p[1] for p in fp) / len(fp)
+        if ((fp_cx - rd_x) ** 2 + (fp_cy - rd_y) ** 2) ** 0.5 > 100:
+            driedbag_result = None
+
+    # Stap 3: Fallback — spatial lookup op coördinaten als pand_id niet werkt
+    if not driedbag_result or not driedbag_result.footprint_rd:
+        try:
+            loc = await asyncio.to_thread(driedbag_inst.get_building_by_location, rd_x, rd_y)
+            if loc and loc.footprint_rd:
+                driedbag_result = loc
+                pand_id = loc.pand_identificatie
+        except Exception:
+            pass
+
+    footprint_rd = driedbag_result.footprint_rd if driedbag_result else None
+
+    # Stap 4: Wave 3 — parallel spatial queries (allen file-gecached na eerste aanroep)
+    from collectors.perceelgrens_collector import create_perceelgrens_collector
+    from collectors.bgt_boom_collector import create_bgt_boom_collector
+    from collectors.bgt_wegdeel_collector import create_bgt_wegdeel_collector
+
+    def _get_perceel():
+        col = create_perceelgrens_collector()
+        result = col.get_perceel(rd_x, rd_y, building_footprint_rd=footprint_rd)
+        return result.perceel_polygon_rd if result else None
+
+    def _get_roads():
+        return create_bgt_wegdeel_collector().get_roads(rd_x, rd_y, radius=50)
+
+    def _get_trees():
+        return create_bgt_boom_collector().get_trees(rd_x, rd_y, radius=75)
+
+    def _get_buurtgebouwen():
+        excl = driedbag_result.pand_identificatie if driedbag_result else None
+        return driedbag_inst.get_surrounding_buildings(rd_x, rd_y, radius=75, exclude_pand_id=excl)
+
+    perceel_polygon, road_polygons_raw, bomen_raw, buurtgebouwen_raw = await asyncio.gather(
+        asyncio.to_thread(_get_perceel),
+        asyncio.to_thread(_get_roads),
+        asyncio.to_thread(_get_trees),
+        asyncio.to_thread(_get_buurtgebouwen),
+    )
+
+    road_polygons = road_polygons_raw or []
+    bomen = bomen_raw or []
+    buurtgebouwen = buurtgebouwen_raw or []
+
+    # Stap 5: Oriëntatie berekening
+    from services.orientatie import bereken_orientatie
+
+    orientatie_data = bereken_orientatie(
+        rd_x=rd_x,
+        rd_y=rd_y,
+        building_footprint_rd=footprint_rd,
+        perceel_polygon_rd=perceel_polygon,
+        gebouwhoogte=driedbag_result.gebouwhoogte if driedbag_result else None,
+        dak_azimut=driedbag_result.dak_azimut if driedbag_result else None,
+        dak_hellingshoek=driedbag_result.dak_hellingshoek if driedbag_result else None,
+        opp_dak_schuin=driedbag_result.opp_dak_schuin if driedbag_result else None,
+        opp_dak_plat=driedbag_result.opp_dak_plat if driedbag_result else None,
+        dak_type=driedbag_result.dak_type if driedbag_result else None,
+        dak_delen=driedbag_result.dak_delen if driedbag_result else None,
+        buurtgebouwen=buurtgebouwen,
+        bomen=bomen,
+        road_polygons=road_polygons,
+        latitude=geo.lat,
+    )
+
+    return OrientatieResponse(**orientatie_data.to_dict())
