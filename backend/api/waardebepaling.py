@@ -1,7 +1,9 @@
 """Property valuation (waardebepaling) API routes."""
 
+import asyncio
 import os
 import re
+import time
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -17,7 +19,7 @@ from collectors.energielabel_collector import create_energielabel_collector
 from collectors.kadaster_collector import create_kadaster_collector, TransactionRecord
 from collectors.miljoenhuizen_collector import create_miljoenhuizen_collector, MiljoenhuizenWoning
 from collectors.cbs_market_collector import create_cbs_market_collector
-from collectors.cbs_buurt_collector import create_cbs_buurt_collector, lookup_buurt_code_pdok, geocode_address_pdok
+from collectors.cbs_buurt_collector import create_cbs_buurt_collector
 from collectors.bag_collector import BagClient
 from collectors.rce_collector import create_rce_collector
 from collectors.pdok_beschermde_gebieden_collector import create_pdok_beschermde_gebieden_collector
@@ -28,8 +30,32 @@ from services.plafondhoogte import bereken_plafondhoogte, PlafondhoogteResult
 from datetime import datetime, timedelta
 from sqlalchemy import and_
 from utils.address import parse_huisnummer
+from utils.pdok import geocode_pdok_full, PDOKResult
+from utils.timing import TimingTracker
 
 router = APIRouter(prefix="/api/woningen", tags=["waardebepaling"])
+
+# ============================================================================
+# Module-level collector singletons — ingeladen éénmalig, persistent over requests
+# Voorkomt 36MB JSON-parse (CBS buurt) en CBS API-download per request
+# ============================================================================
+
+_cbs_market_collector = None
+_cbs_buurt_collector = None
+
+
+def _get_cbs_market():
+    global _cbs_market_collector
+    if _cbs_market_collector is None:
+        _cbs_market_collector = create_cbs_market_collector()
+    return _cbs_market_collector
+
+
+def _get_cbs_buurt():
+    global _cbs_buurt_collector
+    if _cbs_buurt_collector is None:
+        _cbs_buurt_collector = create_cbs_buurt_collector()
+    return _cbs_buurt_collector
 
 
 # ============================================================================
@@ -349,6 +375,9 @@ class EnhancedWaardebepalingResponse(BaseModel):
 
     # Saved woning reference
     woning_id: Optional[int] = None
+
+    # Performance debug (only populated when ?debug=true)
+    timing_breakdown: Optional[dict] = None
 
 
 # ============================================================================
@@ -843,12 +872,18 @@ def _lookup_pand_id_pdok(
     return None, rd_x, rd_y
 
 
-def _lookup_wkpb(postcode: str, huisnummer: int) -> Dict[str, Any]:
+def _lookup_wkpb(
+    postcode: str,
+    huisnummer: int,
+    rd_x: Optional[float] = None,
+    rd_y: Optional[float] = None,
+) -> Dict[str, Any]:
     """
     Query Kadaster WKPB (publiekrechtelijke beperkingen) for monument status.
 
     Returns dict with keys: gemeentelijk_monument (bool), rijksmonument (bool),
-    gem_omschrijving, gem_inschrijfdatum, rk_omschrijving, rk_inschrijfdatum.
+    gem_omschrijving, rk_omschrijving.
+    Pass rd_x/rd_y to skip the internal PDOK geocode call.
     """
     import re as _re
 
@@ -859,34 +894,36 @@ def _lookup_wkpb(postcode: str, huisnummer: int) -> Dict[str, Any]:
         "rk_omschrijving": None,
     }
 
-    pc = postcode.replace(" ", "").upper()
+    # Step 1: Get RD coordinates — use provided coords or geocode via PDOK
+    if rd_x is not None and rd_y is not None:
+        x, y = rd_x, rd_y
+    else:
+        pc = postcode.replace(" ", "").upper()
+        try:
+            r = requests.get(
+                PDOK_LOCATIE_URL,
+                params={
+                    "q": f"{pc} {huisnummer}",
+                    "fq": "type:adres",
+                    "rows": 1,
+                    "fl": "centroide_rd",
+                },
+                headers={"Accept": "application/json"},
+                timeout=10,
+            )
+            r.raise_for_status()
+            docs = r.json().get("response", {}).get("docs", [])
+            if not docs:
+                return result
 
-    # Step 1: Geocode to RD coordinates via PDOK
-    try:
-        r = requests.get(
-            PDOK_LOCATIE_URL,
-            params={
-                "q": f"{pc} {huisnummer}",
-                "fq": "type:adres",
-                "rows": 1,
-                "fl": "centroide_rd",
-            },
-            headers={"Accept": "application/json"},
-            timeout=10,
-        )
-        r.raise_for_status()
-        docs = r.json().get("response", {}).get("docs", [])
-        if not docs:
+            rd_point = docs[0].get("centroide_rd", "")
+            m = _re.search(r"POINT\(([\d.]+)\s+([\d.]+)\)", rd_point)
+            if not m:
+                return result
+
+            x, y = float(m.group(1)), float(m.group(2))
+        except Exception:
             return result
-
-        rd_point = docs[0].get("centroide_rd", "")
-        m = _re.search(r"POINT\(([\d.]+)\s+([\d.]+)\)", rd_point)
-        if not m:
-            return result
-
-        x, y = float(m.group(1)), float(m.group(2))
-    except Exception:
-        return result
 
     # Step 2: Query WKPB WFS with small bbox around the point
     buf = 5  # 5 meter buffer for bbox query
@@ -944,7 +981,10 @@ def _lookup_monument(
     huisnummer: int,
     latitude: Optional[float],
     longitude: Optional[float],
-    db: Session,
+    db: Optional[Session] = None,
+    rd_x: Optional[float] = None,
+    rd_y: Optional[float] = None,
+    gem_monument_cached=None,
 ) -> MonumentResponse:
     """Look up monument status from all sources."""
     rijksmonument_info = None
@@ -955,7 +995,7 @@ def _lookup_monument(
 
     # 1. Check WKPB (Kadaster publiekrechtelijke beperkingen) — authoritative
     #    Covers both gemeentelijke monumenten and rijksmonumenten per address
-    wkpb = _lookup_wkpb(postcode, huisnummer)
+    wkpb = _lookup_wkpb(postcode, huisnummer, rd_x=rd_x, rd_y=rd_y)
 
     if wkpb["gemeentelijk_monument"]:
         heeft_status = True
@@ -994,14 +1034,20 @@ def _lookup_monument(
     if not gemeentelijk_info:
         pc = postcode.replace(" ", "").upper()
         try:
-            gem_mon = (
-                db.query(GemeentelijkMonument)
-                .filter(
-                    GemeentelijkMonument.postcode == pc,
-                    GemeentelijkMonument.huisnummer == huisnummer,
+            # Use pre-fetched result when available (avoids DB access from threads)
+            if gem_monument_cached is not None:
+                gem_mon = gem_monument_cached
+            elif db is not None:
+                gem_mon = (
+                    db.query(GemeentelijkMonument)
+                    .filter(
+                        GemeentelijkMonument.postcode == pc,
+                        GemeentelijkMonument.huisnummer == huisnummer,
+                    )
+                    .first()
                 )
-                .first()
-            )
+            else:
+                gem_mon = None
             if gem_mon:
                 heeft_status = True
                 gemeentelijk_info = GemeentelijkMonumentInfo(
@@ -1095,26 +1141,17 @@ def get_woning_monument_status(
 # ============================================================================
 
 @router.post("/waardebepaling/adres", response_model=EnhancedWaardebepalingResponse)
-def bereken_waarde_voor_adres(
+async def bereken_waarde_voor_adres(
     request: EnhancedWaardebepalingRequest,
+    debug: bool = Query(False),
     db: Session = Depends(get_db),
 ):
-    """
-    Enhanced property valuation with automatic data lookup.
+    """Enhanced property valuation with automatic parallel data lookup."""
+    timer = TimingTracker()
 
-    This endpoint:
-    1. Fetches BAG data (surface area, build year)
-    2. Fetches WOZ value from Waardeloket
-    3. Fetches energy label from EP-Online
-    4. Looks up comparable sales
-    5. Calculates valuation with all available data
-    """
-    # Initialize variables
-    woonoppervlakte = request.woonoppervlakte
-    bouwjaar: Optional[int] = None
-    bag_data = None
+    def safe(result):
+        return None if isinstance(result, Exception) else result
 
-    # Helper to safely convert to int
     def safe_int(value) -> Optional[int]:
         if value is None:
             return None
@@ -1123,197 +1160,410 @@ def bereken_waarde_voor_adres(
         except (ValueError, TypeError):
             return None
 
-    # First, try BAG for surface area and build year (most reliable)
-    bag_api_key = os.environ.get("BAG_API_KEY")
-    if bag_api_key:
+    async def _timed(name: str, func, *args, **kwargs):
+        t = time.perf_counter()
         try:
-            bag_client = BagClient(api_key=bag_api_key)
-            bag_data = bag_client.enrich_address(
-                postcode=request.postcode,
-                huisnummer=request.huisnummer,
-                huisletter=request.huisletter,
-                toevoeging=request.toevoeging,
-            )
-            if bag_data:
-                if not woonoppervlakte and bag_data.get("oppervlakte"):
-                    woonoppervlakte = safe_int(bag_data["oppervlakte"])
-                if bag_data.get("pand_bouwjaar"):
-                    bouwjaar = safe_int(bag_data["pand_bouwjaar"])
+            result = await asyncio.to_thread(func, *args, **kwargs)
+            timer.record(name, t)
+            return result
         except Exception:
-            pass
+            timer.record(name, t)
+            return None
 
-    # Fetch WOZ value (may fail silently)
-    woz_result = None
-    try:
-        woz_collector = create_woz_collector()
-        woz_result = woz_collector.get_woz_value(
+    async def _noop():
+        return None
+
+    bag_api_key = os.environ.get("BAG_API_KEY")
+    bag_client = BagClient(api_key=bag_api_key) if bag_api_key else None
+
+    # ─── Wave 1: volledig parallel — alleen postcode+huisnummer nodig ───
+    t_w1 = time.perf_counter()
+    (
+        geo_result,
+        bag_data,
+        woz_result,
+        energielabel_result,
+        funda_raw,
+        glasvezel_raw,
+    ) = await asyncio.gather(
+        _timed("geocode", geocode_pdok_full, request.postcode, request.huisnummer),
+        _timed(
+            "bag",
+            bag_client.enrich_address,
             postcode=request.postcode,
             huisnummer=request.huisnummer,
             huisletter=request.huisletter,
             toevoeging=request.toevoeging,
-        )
-    except Exception:
-        pass
-
-    # Fetch energy label (may fail silently)
-    energielabel_result = None
-    try:
-        energielabel_collector = create_energielabel_collector()
-        energielabel_result = energielabel_collector.get_energielabel(
+        ) if bag_client else _noop(),
+        _timed(
+            "woz",
+            create_woz_collector().get_woz_value,
             postcode=request.postcode,
             huisnummer=request.huisnummer,
             huisletter=request.huisletter,
             toevoeging=request.toevoeging,
-        )
-
-        if energielabel_result:
-            if not woonoppervlakte and energielabel_result.gebruiksoppervlakte:
-                woonoppervlakte = safe_int(energielabel_result.gebruiksoppervlakte)
-            if not bouwjaar and energielabel_result.bouwjaar:
-                bouwjaar = safe_int(energielabel_result.bouwjaar)
-    except Exception:
-        pass
-
-    # Check if we have surface area - required for valuation
-    if not woonoppervlakte:
-        raise HTTPException(
-            status_code=400,
-            detail="Woonoppervlakte kon niet automatisch worden opgehaald. Vul de woonoppervlakte in."
-        )
-
-    # Fetch comparables: combine database + live scraping
-    comparables_result = None
-    try:
-        kadaster_collector = create_kadaster_collector()
-        comparables_result = kadaster_collector.get_comparables(
+        ),
+        _timed(
+            "energielabel",
+            create_energielabel_collector().get_energielabel,
             postcode=request.postcode,
             huisnummer=request.huisnummer,
-            oppervlakte=woonoppervlakte,
-        )
-        db_transactions = _get_db_comparables(db, request.postcode, request.huisnummer)
-        if db_transactions:
-            seen = {(t.postcode, t.huisnummer, t.transactie_datum) for t in comparables_result.transactions}
-            for t in db_transactions:
-                key = (t.postcode, t.huisnummer, t.transactie_datum)
-                if key not in seen:
-                    seen.add(key)
-                    comparables_result.transactions.append(t)
-    except Exception:
-        pass
-
-    # Fetch Miljoenhuizen comparable sales
-    miljoenhuizen_verkopen: List[MiljoenhuizenWoning] = []
-    try:
-        miljoenhuizen_collector = create_miljoenhuizen_collector()
-        miljoenhuizen_verkopen = miljoenhuizen_collector.get_vergelijkbare_verkopen(
-            postcode=request.postcode,
-            huisnummer=request.huisnummer,
-            woonoppervlakte=woonoppervlakte,
-            max_results=10,
-        )
-    except Exception:
-        pass
-
-    # Fetch Funda listing for this address
-    funda_listing_data: Optional[FundaListing] = None
-    try:
-        funda_collector = create_funda_collector()
-        funda_result = funda_collector.search_by_address(
+            huisletter=request.huisletter,
+            toevoeging=request.toevoeging,
+        ),
+        _timed(
+            "funda",
+            create_funda_collector().search_by_address,
             postcode=request.postcode,
             huisnummer=request.huisnummer,
             huisletter=getattr(request, "huisletter", None),
+        ),
+        _timed(
+            "glasvezel",
+            create_glasvezel_collector().get_beschikbaarheid,
+            request.postcode,
+            request.huisnummer,
+        ),
+    )
+    timer.record("wave1_total", t_w1)
+
+    # ─── Na Wave 1: afleiden van basisgegevens ───
+    woonoppervlakte = request.woonoppervlakte
+    bouwjaar: Optional[int] = None
+
+    if bag_data:
+        if not woonoppervlakte and bag_data.get("oppervlakte"):
+            woonoppervlakte = safe_int(bag_data["oppervlakte"])
+        if bag_data.get("pand_bouwjaar"):
+            bouwjaar = safe_int(bag_data["pand_bouwjaar"])
+
+    if energielabel_result:
+        if not woonoppervlakte and energielabel_result.gebruiksoppervlakte:
+            woonoppervlakte = safe_int(energielabel_result.gebruiksoppervlakte)
+        if not bouwjaar and energielabel_result.bouwjaar:
+            bouwjaar = safe_int(energielabel_result.bouwjaar)
+
+    if not woonoppervlakte:
+        raise HTTPException(
+            status_code=400,
+            detail="Woonoppervlakte kon niet automatisch worden opgehaald. Vul de woonoppervlakte in.",
         )
-        if funda_result:
-            funda_listing_data = FundaListing(
-                url=funda_result.url,
-                adres=funda_result.address,
-                postcode=funda_result.postcode,
-                plaats=funda_result.city,
-                vraagprijs=funda_result.price,
-                vraagprijs_suffix=funda_result.price_suffix,
-                woonoppervlakte=funda_result.living_area,
-                perceeloppervlakte=funda_result.plot_area,
-                inhoud=funda_result.volume,
-                prijs_per_m2=funda_result.price_per_m2,
-                kamers=funda_result.rooms,
-                slaapkamers=funda_result.bedrooms,
-                badkamers=funda_result.bathrooms,
-                bouwjaar=funda_result.year_built,
-                woningtype=funda_result.building_type,
-                bouwtype=funda_result.construction_type,
-                energielabel=funda_result.energy_label,
-                eigendom_type=funda_result.eigendom_type,
-                vve_bijdrage=funda_result.vve_bijdrage,
-                erfpacht_bedrag=funda_result.erfpacht_bedrag,
-                tuin_type=funda_result.tuin_type,
-                tuin_oppervlakte=funda_result.tuin_oppervlakte,
-                tuin_orientatie=funda_result.tuin_orientatie,
-                buitenruimte=funda_result.buitenruimte,
-                balkon=funda_result.balkon,
-                dakterras=funda_result.dakterras,
-                verdiepingen=funda_result.verdiepingen,
-                garage_type=funda_result.garage_type,
-                parkeerplaatsen=funda_result.parkeerplaatsen,
-                parkeer_type=funda_result.parkeer_type,
-                kelder=funda_result.kelder,
-                zolder=funda_result.zolder,
-                berging=funda_result.berging,
-                isolatie=funda_result.isolatie,
-                verwarming=funda_result.verwarming,
-                dak_type=funda_result.dak_type,
-                aangeboden_sinds=funda_result.aangeboden_sinds,
-                status=funda_result.status,
-                verkoopdatum=funda_result.verkoopdatum,
-                looptijd_dagen=funda_result.looptijd_dagen,
-            )
-    except Exception:
-        pass
 
     energielabel = energielabel_result.energielabel if energielabel_result else None
     grondoppervlakte = woz_result.oppervlakte if woz_result else None
 
-    # Fetch 3DBAG data and calculate ceiling height estimation
-    driedbag_result = None
-    driedbag = create_driedbag_collector()
-    plafondhoogte_result = None
-    pand_identificatie = None
-    adres_rd_x, adres_rd_y = None, None  # True address coordinates from PDOK
-
-    # Always get PDOK coordinates (authoritative location)
-    pdok_pand_id, adres_rd_x, adres_rd_y = _lookup_pand_id_pdok(
-        request.postcode, request.huisnummer
-    )
-
-    if bag_data and bag_data.get("pand_identificaties"):
-        pand_identificatie = str(bag_data["pand_identificaties"][0])
-    elif pdok_pand_id:
-        pand_identificatie = pdok_pand_id
-
-    if pand_identificatie:
+    # Funda-listing transformatie
+    funda_listing_data: Optional[FundaListing] = None
+    if funda_raw:
         try:
-            driedbag_result = driedbag.get_building_data(pand_identificatie)
+            funda_listing_data = FundaListing(
+                url=funda_raw.url,
+                adres=funda_raw.address,
+                postcode=funda_raw.postcode,
+                plaats=funda_raw.city,
+                vraagprijs=funda_raw.price,
+                vraagprijs_suffix=funda_raw.price_suffix,
+                woonoppervlakte=funda_raw.living_area,
+                perceeloppervlakte=funda_raw.plot_area,
+                inhoud=funda_raw.volume,
+                prijs_per_m2=funda_raw.price_per_m2,
+                kamers=funda_raw.rooms,
+                slaapkamers=funda_raw.bedrooms,
+                badkamers=funda_raw.bathrooms,
+                bouwjaar=funda_raw.year_built,
+                woningtype=funda_raw.building_type,
+                bouwtype=funda_raw.construction_type,
+                energielabel=funda_raw.energy_label,
+                eigendom_type=funda_raw.eigendom_type,
+                vve_bijdrage=funda_raw.vve_bijdrage,
+                erfpacht_bedrag=funda_raw.erfpacht_bedrag,
+                tuin_type=funda_raw.tuin_type,
+                tuin_oppervlakte=funda_raw.tuin_oppervlakte,
+                tuin_orientatie=funda_raw.tuin_orientatie,
+                buitenruimte=funda_raw.buitenruimte,
+                balkon=funda_raw.balkon,
+                dakterras=funda_raw.dakterras,
+                verdiepingen=funda_raw.verdiepingen,
+                garage_type=funda_raw.garage_type,
+                parkeerplaatsen=funda_raw.parkeerplaatsen,
+                parkeer_type=funda_raw.parkeer_type,
+                kelder=funda_raw.kelder,
+                zolder=funda_raw.zolder,
+                berging=funda_raw.berging,
+                isolatie=funda_raw.isolatie,
+                verwarming=funda_raw.verwarming,
+                dak_type=funda_raw.dak_type,
+                aangeboden_sinds=funda_raw.aangeboden_sinds,
+                status=funda_raw.status,
+                verkoopdatum=funda_raw.verkoopdatum,
+                looptijd_dagen=funda_raw.looptijd_dagen,
+            )
         except Exception:
             pass
 
-    # Validate: if 3DBAG footprint is far from PDOK address, use spatial lookup
+    # Glasvezel-response transformatie
+    glasvezel_response = None
+    if glasvezel_raw and not glasvezel_raw.error:
+        try:
+            glasvezel_response = GlasvezelResponse(
+                glasvezel_beschikbaar=glasvezel_raw.glasvezel_beschikbaar,
+                glasvezel_snelheid=glasvezel_raw.glasvezel_snelheid,
+                glasvezel_provider=glasvezel_raw.glasvezel_provider,
+                kabel_beschikbaar=glasvezel_raw.kabel_beschikbaar,
+                kabel_snelheid=glasvezel_raw.kabel_snelheid,
+                kabel_provider=glasvezel_raw.kabel_provider,
+                dsl_snelheid=glasvezel_raw.dsl_snelheid,
+                max_snelheid=glasvezel_raw.max_snelheid,
+                adres_gevonden=glasvezel_raw.adres_gevonden,
+            )
+        except Exception:
+            pass
+
+    # Coördinaten en pand-ID afleiden uit Wave 1
+    adres_rd_x = geo_result.rd_x if geo_result else None
+    adres_rd_y = geo_result.rd_y if geo_result else None
+    buurt_code = geo_result.buurt_code if geo_result else None
+
+    pand_identificatie: Optional[str] = None
+    if bag_data and bag_data.get("pand_identificaties"):
+        pand_identificatie = str(bag_data["pand_identificaties"][0])
+
+    # Fallback pand-ID via BAG WFS als BAG API niet beschikbaar was
+    if not pand_identificatie and geo_result and geo_result.adresseerbaarobject_id:
+        vbo_id = geo_result.adresseerbaarobject_id
+        t_wfs = time.perf_counter()
+        try:
+            def _bag_wfs_lookup():
+                r = requests.get(
+                    "https://service.pdok.nl/lv/bag/wfs/v2_0",
+                    params={
+                        "service": "WFS",
+                        "version": "2.0.0",
+                        "request": "GetFeature",
+                        "typeName": "bag:verblijfsobject",
+                        "outputFormat": "application/json",
+                        "CQL_FILTER": f"identificatie='{vbo_id}'",
+                        "count": 1,
+                    },
+                    timeout=10,
+                )
+                r.raise_for_status()
+                features = r.json().get("features", [])
+                if features:
+                    pid = features[0].get("properties", {}).get("pandidentificatie")
+                    return str(pid) if pid else None
+                return None
+            pand_identificatie = await asyncio.to_thread(_bag_wfs_lookup)
+        except Exception:
+            pass
+        timer.record("bag_wfs", t_wfs)
+
+    gemeente_naam = None
+    if bag_data and bag_data.get("woonplaats_naam"):
+        gemeente_naam = bag_data.get("woonplaats_naam")
+    elif woz_result and woz_result.woonplaats:
+        gemeente_naam = woz_result.woonplaats
+
+    # DB-queries voor Wave 2 (niet in threads — synchrone sessie)
+    pc_norm = request.postcode.replace(" ", "").upper()
+    db_comparables = _get_db_comparables(db, request.postcode, request.huisnummer)
+    gem_monument_db = None
+    try:
+        gem_monument_db = (
+            db.query(GemeentelijkMonument)
+            .filter(
+                GemeentelijkMonument.postcode == pc_norm,
+                GemeentelijkMonument.huisnummer == request.huisnummer,
+            )
+            .first()
+        )
+    except Exception:
+        pass
+
+    # ─── Wave 2: parallel — gebruikt resultaten van Wave 1 ───
+    t_w2 = time.perf_counter()
+    driedbag_inst = create_driedbag_collector()
+
+    (
+        comparables_result,
+        miljoenhuizen_verkopen_raw,
+        cbs_market_data,
+        buurt_data,
+        monument_result,
+        driedbag_result,
+    ) = await asyncio.gather(
+        _timed(
+            "kadaster",
+            create_kadaster_collector().get_comparables,
+            postcode=request.postcode,
+            huisnummer=request.huisnummer,
+            oppervlakte=woonoppervlakte,
+        ),
+        _timed(
+            "miljoenhuizen",
+            create_miljoenhuizen_collector().get_vergelijkbare_verkopen,
+            postcode=request.postcode,
+            huisnummer=request.huisnummer,
+            woonoppervlakte=woonoppervlakte,
+            max_results=10,
+        ),
+        _timed(
+            "cbs_market",
+            _get_cbs_market().get_market_data,
+            gemeente_naam,
+        ) if gemeente_naam else _noop(),
+        _timed(
+            "cbs_buurt",
+            _get_cbs_buurt().get_buurt,
+            buurt_code,
+        ) if buurt_code else _noop(),
+        _timed(
+            "monument",
+            _lookup_monument,
+            request.postcode,
+            request.huisnummer,
+            geo_result.lat if geo_result else None,
+            geo_result.lng if geo_result else None,
+            None,  # db niet gebruikt want gem_monument_cached is meegegeven
+            adres_rd_x,
+            adres_rd_y,
+            gem_monument_db,
+        ),
+        _timed(
+            "driedbag",
+            driedbag_inst.get_building_data,
+            pand_identificatie,
+        ) if pand_identificatie else _noop(),
+    )
+    timer.record("wave2_total", t_w2)
+
+    # Comparables samenvoegen met DB-data
+    miljoenhuizen_verkopen: List[MiljoenhuizenWoning] = miljoenhuizen_verkopen_raw or []
+    if comparables_result and db_comparables:
+        seen = {(t.postcode, t.huisnummer, t.transactie_datum) for t in comparables_result.transactions}
+        for t in db_comparables:
+            key = (t.postcode, t.huisnummer, t.transactie_datum)
+            if key not in seen:
+                seen.add(key)
+                comparables_result.transactions.append(t)
+
+    # 3DBAG footprint validatie en fallback spatial lookup
     if driedbag_result and driedbag_result.footprint_rd and adres_rd_x and adres_rd_y:
         fp = driedbag_result.footprint_rd
         fp_cx = sum(p[0] for p in fp) / len(fp)
         fp_cy = sum(p[1] for p in fp) / len(fp)
         dist = ((fp_cx - adres_rd_x) ** 2 + (fp_cy - adres_rd_y) ** 2) ** 0.5
-        if dist > 100:  # footprint > 100m from address = wrong building
+        if dist > 100:
             driedbag_result = None
 
-    # Fallback: spatial lookup by RD coordinates
     if (not driedbag_result or not driedbag_result.footprint_rd) and adres_rd_x and adres_rd_y:
+        t_fallback = time.perf_counter()
         try:
-            loc_result = driedbag.get_building_by_location(adres_rd_x, adres_rd_y)
+            loc_result = await asyncio.to_thread(
+                driedbag_inst.get_building_by_location, adres_rd_x, adres_rd_y
+            )
             if loc_result and loc_result.footprint_rd:
                 driedbag_result = loc_result
                 pand_identificatie = loc_result.pand_identificatie
         except Exception:
             pass
+        timer.record("driedbag_fallback", t_fallback)
 
+    # ─── Wave 3: parallel — gebruikt 3DBAG footprint ───
+    footprint_rd = driedbag_result.footprint_rd if driedbag_result else None
+    orientatie_rd_x, orientatie_rd_y = adres_rd_x, adres_rd_y
+    if not orientatie_rd_x and footprint_rd:
+        orientatie_rd_x = sum(p[0] for p in footprint_rd) / len(footprint_rd)
+        orientatie_rd_y = sum(p[1] for p in footprint_rd) / len(footprint_rd)
+
+    perceel_polygon = None
+    buurtgebouwen = []
+    bomen = []
+    road_polygons = []
+
+    if orientatie_rd_x and orientatie_rd_y:
+        from collectors.perceelgrens_collector import create_perceelgrens_collector
+        from collectors.bgt_boom_collector import create_bgt_boom_collector
+        from collectors.bgt_wegdeel_collector import create_bgt_wegdeel_collector
+
+        t_w3 = time.perf_counter()
+
+        def _get_perceel():
+            col = create_perceelgrens_collector()
+            result = col.get_perceel(
+                orientatie_rd_x, orientatie_rd_y,
+                building_footprint_rd=footprint_rd,
+            )
+            return result.perceel_polygon_rd if result else None
+
+        def _get_roads():
+            return create_bgt_wegdeel_collector().get_roads(
+                orientatie_rd_x, orientatie_rd_y, radius=50
+            )
+
+        def _get_trees():
+            return create_bgt_boom_collector().get_trees(
+                orientatie_rd_x, orientatie_rd_y, radius=75
+            )
+
+        def _get_buurtgebouwen():
+            pand_id = driedbag_result.pand_identificatie if driedbag_result else None
+            return driedbag_inst.get_surrounding_buildings(
+                orientatie_rd_x, orientatie_rd_y,
+                radius=75,
+                exclude_pand_id=pand_id,
+            )
+
+        (
+            perceel_polygon,
+            road_polygons_raw,
+            bomen_raw,
+            buurtgebouwen_raw,
+        ) = await asyncio.gather(
+            _timed("perceel", _get_perceel),
+            _timed("bgt_roads", _get_roads),
+            _timed("bgt_bomen", _get_trees),
+            _timed("buurtgebouwen", _get_buurtgebouwen),
+        )
+        timer.record("wave3_total", t_w3)
+
+        road_polygons = road_polygons_raw or []
+        bomen = bomen_raw or []
+        buurtgebouwen = buurtgebouwen_raw or []
+
+    # Oriëntatie berekening
+    orientatie_response = None
+    if orientatie_rd_x and orientatie_rd_y:
+        try:
+            from services.orientatie import bereken_orientatie
+            funda_tuin_orientatie = funda_listing_data.tuin_orientatie if funda_listing_data else None
+            funda_tuin_oppervlakte = funda_listing_data.tuin_oppervlakte if funda_listing_data else None
+
+            orientatie_data = bereken_orientatie(
+                rd_x=orientatie_rd_x,
+                rd_y=orientatie_rd_y,
+                building_footprint_rd=footprint_rd,
+                perceel_polygon_rd=perceel_polygon,
+                gebouwhoogte=driedbag_result.gebouwhoogte if driedbag_result else None,
+                dak_azimut=driedbag_result.dak_azimut if driedbag_result else None,
+                dak_hellingshoek=driedbag_result.dak_hellingshoek if driedbag_result else None,
+                opp_dak_schuin=driedbag_result.opp_dak_schuin if driedbag_result else None,
+                opp_dak_plat=driedbag_result.opp_dak_plat if driedbag_result else None,
+                dak_type=driedbag_result.dak_type if driedbag_result else None,
+                dak_delen=driedbag_result.dak_delen if driedbag_result else None,
+                buurtgebouwen=buurtgebouwen,
+                bomen=bomen,
+                road_polygons=road_polygons,
+                funda_tuin_orientatie=funda_tuin_orientatie,
+                funda_tuin_oppervlakte=funda_tuin_oppervlakte,
+            )
+            if orientatie_data.tuin_orientatie or orientatie_data.zonnepanelen_score:
+                orientatie_response = OrientatieResponse(**orientatie_data.to_dict())
+        except Exception:
+            pass
+
+    # Plafondhoogte berekening
+    plafondhoogte_response = None
     plafondhoogte_data = bereken_plafondhoogte(
         h_dak_max=driedbag_result.h_dak_max if driedbag_result else None,
         h_dak_min=driedbag_result.h_dak_min if driedbag_result else None,
@@ -1329,8 +1579,6 @@ def bereken_waarde_voor_adres(
         verdiepingen=funda_listing_data.verdiepingen if funda_listing_data else None,
         dak_type_funda=funda_listing_data.dak_type if funda_listing_data else None,
     )
-
-    plafondhoogte_response = None
     if plafondhoogte_data.geschatte_verdiepingshoogte is not None:
         plafondhoogte_response = PlafondhoogteResponse(
             geschatte_verdiepingshoogte=plafondhoogte_data.geschatte_verdiepingshoogte,
@@ -1340,185 +1588,23 @@ def bereken_waarde_voor_adres(
             details=plafondhoogte_data.details,
         )
 
-    # Zon en oriëntatie analyse
-    orientatie_response = None
-    try:
-        from services.orientatie import bereken_orientatie
-        from collectors.perceelgrens_collector import create_perceelgrens_collector
-        from collectors.bgt_boom_collector import create_bgt_boom_collector
-        from collectors.bgt_wegdeel_collector import create_bgt_wegdeel_collector
-
-        footprint_rd = driedbag_result.footprint_rd if driedbag_result else None
-
-        # Gebruik PDOK adrescoördinaten als primaire locatie (altijd betrouwbaar),
-        # footprint centroid als fallback
-        orientatie_rd_x, orientatie_rd_y = adres_rd_x, adres_rd_y
-        if not orientatie_rd_x and footprint_rd:
-            orientatie_rd_x = sum(p[0] for p in footprint_rd) / len(footprint_rd)
-            orientatie_rd_y = sum(p[1] for p in footprint_rd) / len(footprint_rd)
-
-        perceel_polygon = None
-        buurtgebouwen = []
-        bomen = []
-        road_polygons = []
-
-        if orientatie_rd_x and orientatie_rd_y:
-            # BGT wegdelen ophalen (voorkant-detectie)
-            try:
-                weg_collector = create_bgt_wegdeel_collector()
-                road_polygons = weg_collector.get_roads(
-                    orientatie_rd_x, orientatie_rd_y, radius=50
-                )
-            except Exception:
-                pass
-
-            # Perceelgrenzen ophalen
-            try:
-                perceel_collector = create_perceelgrens_collector()
-                perceel_result = perceel_collector.get_perceel(
-                    orientatie_rd_x, orientatie_rd_y,
-                    building_footprint_rd=footprint_rd,
-                )
-                perceel_polygon = perceel_result.perceel_polygon_rd
-            except Exception:
-                pass
-
-            # Buurtgebouwen ophalen
-            try:
-                pand_id = driedbag_result.pand_identificatie if driedbag_result else None
-                buurtgebouwen = driedbag.get_surrounding_buildings(
-                    orientatie_rd_x, orientatie_rd_y,
-                    radius=75,
-                    exclude_pand_id=pand_id,
-                )
-            except Exception:
-                pass
-
-            # BGT bomen met AHN hoogtes
-            try:
-                boom_collector = create_bgt_boom_collector()
-                bomen = boom_collector.get_trees(
-                    orientatie_rd_x, orientatie_rd_y, radius=75
-                )
-            except Exception:
-                pass
-
-        # Funda tuin-data voor vergelijking
-        funda_tuin_orientatie = None
-        funda_tuin_oppervlakte = None
-        if funda_listing_data:
-            funda_tuin_orientatie = funda_listing_data.tuin_orientatie
-            funda_tuin_oppervlakte = funda_listing_data.tuin_oppervlakte
-
-        orientatie_data = bereken_orientatie(
-            rd_x=orientatie_rd_x or 0.0,
-            rd_y=orientatie_rd_y or 0.0,
-            building_footprint_rd=footprint_rd,
-            perceel_polygon_rd=perceel_polygon,
-            gebouwhoogte=driedbag_result.gebouwhoogte if driedbag_result else None,
-            dak_azimut=driedbag_result.dak_azimut if driedbag_result else None,
-            dak_hellingshoek=driedbag_result.dak_hellingshoek if driedbag_result else None,
-            opp_dak_schuin=driedbag_result.opp_dak_schuin if driedbag_result else None,
-            opp_dak_plat=driedbag_result.opp_dak_plat if driedbag_result else None,
-            dak_type=driedbag_result.dak_type if driedbag_result else None,
-            dak_delen=driedbag_result.dak_delen if driedbag_result else None,
-            buurtgebouwen=buurtgebouwen,
-            bomen=bomen,
-            road_polygons=road_polygons,
-            funda_tuin_orientatie=funda_tuin_orientatie,
-            funda_tuin_oppervlakte=funda_tuin_oppervlakte,
-        )
-
-        if orientatie_data.tuin_orientatie or orientatie_data.zonnepanelen_score:
-            orientatie_response = OrientatieResponse(
-                **orientatie_data.to_dict()
-            )
-    except Exception:
-        pass
-
-    # Fetch CBS market data for dynamic overbid percentage
-    cbs_market_data = None
+    # CBS market → overbod percentage voor waardebepaling
     market_overbid_pct = None
-    try:
-        cbs_collector = create_cbs_market_collector()
-        gemeente_naam = None
-        if bag_data and bag_data.get("woonplaats_naam"):
-            gemeente_naam = bag_data.get("woonplaats_naam")
-        elif woz_result and woz_result.woonplaats:
-            gemeente_naam = woz_result.woonplaats
+    if cbs_market_data and cbs_market_data.overbiedingspercentage is not None:
+        market_overbid_pct = cbs_market_data.overbiedingspercentage / 100.0
 
-        if gemeente_naam:
-            cbs_market_data = cbs_collector.get_market_data(gemeente_naam)
-            if cbs_market_data.overbiedingspercentage is not None:
-                market_overbid_pct = cbs_market_data.overbiedingspercentage / 100.0
-    except Exception:
-        pass
-
-    # Fetch CBS buurt data for neighborhood-level indicators
-    buurt_data = None
-    buurt_code = None
-    try:
-        buurt_code = lookup_buurt_code_pdok(request.postcode, request.huisnummer)
-        if buurt_code:
-            buurt_collector = create_cbs_buurt_collector()
-            buurt_data = buurt_collector.get_buurt(buurt_code)
-    except Exception:
-        pass
-
-    # Fetch monument status
-    monument_result = None
-    try:
-        # Get lat/lon for PDOK check - try geocoding first
-        mon_lat, mon_lon = None, None
-        try:
-            geo_mon = geocode_address_pdok(request.postcode, request.huisnummer)
-            if geo_mon:
-                mon_lat = geo_mon["lat"]
-                mon_lon = geo_mon["lng"]
-        except Exception:
-            pass
-
-        monument_result = _lookup_monument(
-            request.postcode, request.huisnummer,
-            mon_lat, mon_lon, db,
-        )
-    except Exception:
-        pass
-
-    # Fetch glasvezel beschikbaarheid
-    glasvezel_response = None
-    try:
-        glasvezel_collector = create_glasvezel_collector()
-        glasvezel_result = glasvezel_collector.get_beschikbaarheid(
-            request.postcode, request.huisnummer
-        )
-        if not glasvezel_result.error:
-            glasvezel_response = GlasvezelResponse(
-                glasvezel_beschikbaar=glasvezel_result.glasvezel_beschikbaar,
-                glasvezel_snelheid=glasvezel_result.glasvezel_snelheid,
-                glasvezel_provider=glasvezel_result.glasvezel_provider,
-                kabel_beschikbaar=glasvezel_result.kabel_beschikbaar,
-                kabel_snelheid=glasvezel_result.kabel_snelheid,
-                kabel_provider=glasvezel_result.kabel_provider,
-                dsl_snelheid=glasvezel_result.dsl_snelheid,
-                max_snelheid=glasvezel_result.max_snelheid,
-                adres_gevonden=glasvezel_result.adres_gevonden,
-            )
-    except Exception:
-        pass
-
-    # Calculate valuation
+    # Waardebepaling berekening
     service = ValuationService(db)
     if market_overbid_pct is not None:
         service.set_market_overbid(market_overbid_pct)
 
-    # Use Funda asking price if user didn't provide one
     vraagprijs = request.vraagprijs
     if not vraagprijs and funda_listing_data and funda_listing_data.vraagprijs:
         vraagprijs = funda_listing_data.vraagprijs
 
     valuation = service.estimate_value(
         woonoppervlakte=woonoppervlakte,
+        buurt_code=buurt_code,
         energielabel=energielabel,
         bouwjaar=bouwjaar,
         woningtype=request.woningtype,
@@ -1526,7 +1612,7 @@ def bereken_waarde_voor_adres(
         grondoppervlakte=grondoppervlakte,
     )
 
-    # Build address string
+    # Adresstring opbouwen
     adres = None
     woonplaats = None
 
@@ -1557,7 +1643,7 @@ def bereken_waarde_voor_adres(
         if request.toevoeging:
             adres += f" {request.toevoeging}"
 
-    # Build list of data sources used
+    # Databronnen lijst
     data_bronnen = []
     if bag_data and bag_data.get("nummeraanduiding_id"):
         data_bronnen.append("BAG (Kadaster)")
@@ -1583,24 +1669,15 @@ def bereken_waarde_voor_adres(
     if glasvezel_response:
         data_bronnen.append("Glasvezelcheck.nl")
 
-    # --- Save/update woning in database ---
+    # ─── DB opslaan/updaten (synchrone sessie, niet in thread) ───
     saved_woning_id = None
+    pc6 = pc_norm[:6]
+    geo_lat = geo_result.lat if geo_result else None
+    geo_lng = geo_result.lng if geo_result else None
+
     try:
-        pc_normalized = request.postcode.replace(" ", "").upper()
-        pc6 = pc_normalized[:6]
-
-        # Geocode for lat/lon
-        geo = geocode_address_pdok(pc_normalized, request.huisnummer)
-
-        # Build short adres (without city) for dedup
         adres_short = adres.split(",")[0].strip() if adres and "," in adres else adres
-
-        # Dedup: find existing woning by pc6 + adres
-        existing = (
-            db.query(Woning)
-            .filter(Woning.pc6 == pc6)
-            .all()
-        )
+        existing = db.query(Woning).filter(Woning.pc6 == pc6).all()
         matched = None
         for w in existing:
             w_adres_short = w.adres.split(",")[0].strip() if w.adres and "," in w.adres else w.adres
@@ -1609,7 +1686,6 @@ def bereken_waarde_voor_adres(
                 break
 
         if matched:
-            # Update existing woning
             matched.adres = adres or matched.adres
             matched.plaats = woonplaats or matched.plaats
             matched.huisnummer = request.huisnummer
@@ -1625,14 +1701,13 @@ def bereken_waarde_voor_adres(
             matched.geschatte_waarde_hoog = valuation.waarde_hoog
             matched.waarde_confidence = valuation.confidence
             matched.biedadvies = valuation.bied_advies.value
-            if geo:
-                matched.latitude = geo["lat"]
-                matched.longitude = geo["lng"]
+            if geo_lat:
+                matched.latitude = geo_lat
+                matched.longitude = geo_lng
             if bag_data:
                 matched.bag_oppervlakte = safe_int(bag_data.get("oppervlakte"))
                 matched.bag_bouwjaar = safe_int(bag_data.get("pand_bouwjaar"))
                 matched.bag_gebruiksdoel = bag_data.get("gebruiksdoel")
-            # Funda data: store in raw_data and track price changes
             if funda_listing_data:
                 raw = matched.raw_data or {}
                 if isinstance(raw, str):
@@ -1640,18 +1715,9 @@ def bereken_waarde_voor_adres(
                     raw = _json.loads(raw)
                 old_funda_prijs = raw.get("funda_vraagprijs")
                 new_funda_prijs = funda_listing_data.vraagprijs
-                # Track price changes in prijshistorie
-                if (
-                    old_funda_prijs
-                    and new_funda_prijs
-                    and old_funda_prijs != new_funda_prijs
-                ):
+                if old_funda_prijs and new_funda_prijs and old_funda_prijs != new_funda_prijs:
                     from models import Prijshistorie
-                    ph_type = (
-                        "verlaagd"
-                        if new_funda_prijs < old_funda_prijs
-                        else "verhoogd"
-                    )
+                    ph_type = "verlaagd" if new_funda_prijs < old_funda_prijs else "verhoogd"
                     ph = Prijshistorie(
                         woning_id=matched.id,
                         prijs=old_funda_prijs,
@@ -1663,7 +1729,6 @@ def bereken_waarde_voor_adres(
                 raw["funda_vraagprijs"] = new_funda_prijs
                 raw["funda_data"] = funda_listing_data.model_dump()
                 matched.raw_data = raw
-                # Update vraagprijs from Funda if user didn't provide one
                 if not request.vraagprijs and new_funda_prijs:
                     matched.vraagprijs = new_funda_prijs
             matched.updated_at = datetime.now()
@@ -1671,9 +1736,8 @@ def bereken_waarde_voor_adres(
             db.commit()
             saved_woning_id = matched.id
         else:
-            # Create new woning
             woning = Woning(
-                adres=adres or f"{pc_normalized} {request.huisnummer}",
+                adres=adres or f"{pc_norm} {request.huisnummer}",
                 postcode=request.postcode,
                 pc6=pc6,
                 plaats=woonplaats,
@@ -1688,8 +1752,8 @@ def bereken_waarde_voor_adres(
                 energielabel=energielabel,
                 status="active",
                 datum_aangemeld=datetime.now(),
-                latitude=geo["lat"] if geo else None,
-                longitude=geo["lng"] if geo else None,
+                latitude=geo_lat,
+                longitude=geo_lng,
                 bag_oppervlakte=safe_int(bag_data.get("oppervlakte")) if bag_data else None,
                 bag_bouwjaar=safe_int(bag_data.get("pand_bouwjaar")) if bag_data else None,
                 bag_gebruiksdoel=bag_data.get("gebruiksdoel") if bag_data else None,
@@ -1765,8 +1829,10 @@ def bereken_waarde_voor_adres(
         ],
         miljoenhuizen_count=len(miljoenhuizen_verkopen),
         miljoenhuizen_avg_vraagprijs=(
-            int(sum(v.laatste_vraagprijs for v in miljoenhuizen_verkopen if v.laatste_vraagprijs) /
-                len([v for v in miljoenhuizen_verkopen if v.laatste_vraagprijs]))
+            int(
+                sum(v.laatste_vraagprijs for v in miljoenhuizen_verkopen if v.laatste_vraagprijs)
+                / len([v for v in miljoenhuizen_verkopen if v.laatste_vraagprijs])
+            )
             if miljoenhuizen_verkopen and any(v.laatste_vraagprijs for v in miljoenhuizen_verkopen)
             else None
         ),
@@ -1782,10 +1848,11 @@ def bereken_waarde_voor_adres(
         data_bronnen=data_bronnen,
         monument=monument_result,
         funda_listing=funda_listing_data,
-        latitude=geo["lat"] if geo else None,
-        longitude=geo["lng"] if geo else None,
+        latitude=geo_lat,
+        longitude=geo_lng,
         plafondhoogte=plafondhoogte_response,
         glasvezel=glasvezel_response,
         orientatie=orientatie_response,
         woning_id=saved_woning_id,
+        timing_breakdown=timer.to_dict() if debug else None,
     )
