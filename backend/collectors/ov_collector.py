@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -238,7 +239,6 @@ class OVCollector:
         if cached:
             return cached
 
-        self._rate_limit()
         try:
             resp = self.session.get(
                 f"{OVAPI_BASE}/stopareacode/{stop_area_code}",
@@ -402,10 +402,15 @@ class OVCollector:
         # Sort by distance
         nearby.sort(key=lambda x: x["afstand_m"])
 
-        # Fetch line details for nearby stops (limit to avoid too many API calls)
+        # Fetch line details for nearby stops in parallel (max 10 concurrent = OVapi rate limit)
+        stops_to_fetch = nearby[:20]
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = {executor.submit(self._fetch_stop_details, s["code"]): s for s in stops_to_fetch}
+            stop_detail_map = {futures[f]["code"]: f.result() for f in as_completed(futures)}
+
         haltes = []
-        for stop in nearby[:20]:
-            stop_detail = self._fetch_stop_details(stop["code"])
+        for stop in stops_to_fetch:
+            stop_detail = stop_detail_map.get(stop["code"])
             lines = []
             freq = None
             if stop_detail:

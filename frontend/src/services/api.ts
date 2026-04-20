@@ -203,8 +203,10 @@ export interface EnhancedWaardebepalingResponse {
   plafondhoogte?: PlafondhoogteResponse
   // Glasvezel beschikbaarheid
   glasvezel?: GlasvezelResponse
-  // Zon en oriëntatie
+  // Zon en oriëntatie (altijd null in main response — apart opgehaald via /3d endpoint)
   orientatie?: OrientatieResponse
+  // 3DBAG pand ID — doorgeven aan /3d endpoint voor gecachede lookup
+  pand_identificatie?: string
   // Data sources
   data_bronnen: string[]
 }
@@ -419,6 +421,22 @@ export async function berekenWaardeVoorAdres(
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}))
     throw new Error(errorData.detail || 'Waardebepaling mislukt')
+  }
+  return response.json()
+}
+
+// 3D orientation and shadow analysis (slow on cold cache, fast on warm)
+export async function getWaardebepaling3D(
+  postcode: string,
+  huisnummer: number,
+  pandId?: string
+): Promise<OrientatieResponse> {
+  const params = pandId ? `?pand_id=${pandId}` : ''
+  const response = await fetch(
+    `${API_BASE}/woningen/waardebepaling/adres/${postcode}/${huisnummer}/3d${params}`
+  )
+  if (!response.ok) {
+    throw new Error('3D data ophalen mislukt')
   }
   return response.json()
 }

@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { useLocation } from 'react-router-dom'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   berekenWaardeVoorAdres,
+  getWaardebepaling3D,
   EnhancedWaardebepalingRequest,
   EnhancedWaardebepalingResponse,
   MonumentResponse,
@@ -631,10 +632,12 @@ function FundaListingPanel({ listing, bagWoonoppervlakte, plafondhoogte }: { lis
   )
 }
 
-function AnalyseColumn({ result, onCopy, copied }: {
+function AnalyseColumn({ result, onCopy, copied, orientatieData, isOrientatieLoading }: {
   result: EnhancedWaardebepalingResponse
   onCopy: (waarde: number) => void
   copied: boolean
+  orientatieData?: OrientatieResponse
+  isOrientatieLoading?: boolean
 }) {
   return (
     <div className="space-y-4">
@@ -771,10 +774,17 @@ function AnalyseColumn({ result, onCopy, copied }: {
         <GlasvezelPanel glasvezel={result.glasvezel} />
       )}
 
-      {/* Zon en oriëntatie */}
-      {result.orientatie && (
-        <OrientatiePanel orientatie={result.orientatie} />
-      )}
+      {/* Zon en oriëntatie — asynchroon geladen via /3d endpoint */}
+      {isOrientatieLoading ? (
+        <div className="bg-white rounded-lg shadow p-4 animate-pulse">
+          <div className="h-5 bg-gray-200 rounded w-1/3 mb-3"></div>
+          <div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
+          <div className="h-4 bg-gray-200 rounded w-2/3 mb-2"></div>
+          <div className="h-4 bg-gray-200 rounded w-1/2"></div>
+        </div>
+      ) : orientatieData ? (
+        <OrientatiePanel orientatie={orientatieData} />
+      ) : null}
 
       {/* Marktindicatoren */}
       {(result.markt_gem_prijs || result.markt_overbiedpct || result.markt_verkooptijd) && (
@@ -902,6 +912,19 @@ export default function WaardebepalingPage() {
       queryClient.invalidateQueries({ queryKey: ['woningen'] })
       queryClient.invalidateQueries({ queryKey: ['woningen-geojson'] })
     },
+  })
+
+  // 3D oriëntatie-data — asynchroon opgehaald zodra waardebepaling klaar is
+  const { data: orientatieData, isLoading: isOrientatieLoading } = useQuery({
+    queryKey: ['waardebepaling-3d', mutation.data?.postcode, mutation.data?.huisnummer],
+    queryFn: () => getWaardebepaling3D(
+      mutation.data!.postcode,
+      mutation.data!.huisnummer,
+      mutation.data?.pand_identificatie ?? undefined,
+    ),
+    enabled: !!mutation.data,
+    staleTime: Infinity,
+    retry: 1,
   })
 
   // Auto-fill en auto-submit vanuit WoningCard (via navigate state)
@@ -1039,7 +1062,13 @@ export default function WaardebepalingPage() {
             />
           </div>
           <div className="lg:col-span-2">
-            <AnalyseColumn result={result} onCopy={handleCopy} copied={copied} />
+            <AnalyseColumn
+              result={result}
+              onCopy={handleCopy}
+              copied={copied}
+              orientatieData={orientatieData}
+              isOrientatieLoading={isOrientatieLoading}
+            />
           </div>
         </div>
       )}
