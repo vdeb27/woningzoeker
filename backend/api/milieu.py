@@ -1,5 +1,6 @@
 """Milieu & gezondheid API routes."""
 
+import asyncio
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Query
@@ -84,18 +85,20 @@ def get_luchtmeetnet(
 
 
 @router.get("/pfas", response_model=PFASResponse)
-def get_pfas(
+async def get_pfas(
     lat: float = Query(..., description="Breedtegraad (WGS84)"),
     lng: float = Query(..., description="Lengtegraad (WGS84)"),
     radius_km: float = Query(1.0, description="Zoekradius in km"),
 ):
     """PFAS bodemverontreiniging nabij een locatie (RIVM + gemeentelijke bodemkaart)."""
     collector = create_rivm_pfas_collector(search_radius_km=radius_km)
-    result = collector.get_for_location(lat, lng)
-
-    # Gemeentelijke bodemkaart
     bodemkaart_collector = create_pfas_bodemkaart_collector()
-    bk = bodemkaart_collector.get_for_location(lat, lng)
+
+    result, bk = await asyncio.gather(
+        asyncio.to_thread(collector.get_for_location, lat, lng),
+        asyncio.to_thread(bodemkaart_collector.get_for_location, lat, lng),
+    )
+
     bodemkaart = None
     if bk.in_den_haag:
         bodemkaart = BodemkaartResponse(
